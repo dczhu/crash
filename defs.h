@@ -3226,8 +3226,13 @@ struct arm64_stackframe {
 
 #define PAGEBASE(X)		(((ulong)(X)) & (ulong)machdep->pagemask)
 
-#define PTOV(X)            ((unsigned long)(X) + 0x80000000lu)
-#define VTOP(X)            ((unsigned long)(X) & 0x1ffffffflu)
+/*
+ * Physical address start -- It does not necessarily start from 0. Some
+ * platforms have 0x20000000 as the 1st physical address.
+ */
+#define PHYS_START		0
+#define PTOV(X)            ((unsigned long)(X) + 0x80000000lu - PHYS_START)
+#define VTOP(X)            (((unsigned long)(X) & 0x1ffffffflu) + PHYS_START)
 
 #define IS_VMALLOC_ADDR(X) (vt->vmalloc_start && (ulong)(X) >= vt->vmalloc_start)
 
