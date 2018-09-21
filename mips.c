@@ -971,7 +971,12 @@ static int mips_init_active_task_regs(void)
 static int
 mips_verify_symbol(const char *name, ulong value, char type)
 {
-	if (STREQ(name, "_text"))
+	/*
+	 * _stext appears earlier than _text in symbol table. So if we only
+	 * check _text, then _stext will not be stored into symbol hash table
+	 * because it can not pass verification in here.
+	 */
+	if (STREQ(name, "_text") || STREQ(name, "_stext"))
 		machdep->flags |= KSYMS_START;
 
 	return (name && strlen(name) && (machdep->flags & KSYMS_START) &&
