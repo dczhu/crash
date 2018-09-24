@@ -69,9 +69,10 @@
 #  define offsetof(TYPE, MEMBER) ((ulong)&((TYPE *)0)->MEMBER)
 #endif
 
-#if !defined(X86) && !defined(X86_64) && !defined(ALPHA) && !defined(PPC) && \
+#if !defined(X86) && !defined(X86_64) && !defined(ALPHA) && !defined(PPC) &&  \
     !defined(IA64) && !defined(PPC64) && !defined(S390) && !defined(S390X) && \
-    !defined(ARM) && !defined(ARM64) && !defined(MIPS) && !defined(SPARC64)
+    !defined(ARM) && !defined(ARM64) && !defined(MIPS) && !defined(MIPS64) && \
+    !defined(SPARC64)
 #ifdef __alpha__
 #define ALPHA
 #endif
@@ -104,7 +105,11 @@
 #define ARM64
 #endif
 #ifdef __mipsel__
+#ifdef __LP64__
+#define MIPS64
+#else
 #define MIPS
+#endif
 #endif
 #ifdef __sparc_v9__
 #define SPARC64
@@ -143,6 +148,9 @@
 #endif
 #ifdef MIPS
 #define NR_CPUS  (32)
+#endif
+#ifdef MIPS64
+#define NR_CPUS  (32) /* same as 32b for now */
 #endif
 #ifdef SPARC64
 #define NR_CPUS  (4096)
@@ -3220,21 +3228,38 @@ struct arm64_stackframe {
 
 #endif  /* ARM64 */
 
+#if defined(MIPS) || defined(MIPS64)
 #ifdef MIPS
 #define _32BIT_
 #define MACHINE_TYPE		"MIPS"
+#else
+#define _64BIT_
+#define MACHINE_TYPE		"MIPS64"
+#endif
 
 #define PAGEBASE(X)		(((ulong)(X)) & (ulong)machdep->pagemask)
 
 /*
  * Physical address start -- It does not necessarily start from 0. Some
- * platforms have 0x20000000 as the 1st physical address.
+ * platforms, for example, have 0x20000000 as the 1st physical address.
  */
 #define PHYS_START		0
-#define PTOV(X)            ((unsigned long)(X) + 0x80000000lu - PHYS_START)
-#define VTOP(X)            (((unsigned long)(X) & 0x1ffffffflu) + PHYS_START)
+#ifdef MIPS
+#define PTOV(X)		((unsigned long)(X) + 0x80000000lu - PHYS_START)
+#define VTOP(X)		(((unsigned long)(X) & 0x1ffffffflu) + PHYS_START)
 
-#define IS_VMALLOC_ADDR(X) (vt->vmalloc_start && (ulong)(X) >= vt->vmalloc_start)
+#define IS_VMALLOC_ADDR(X)	(vt->vmalloc_start && \
+				(ulong)(X) >= vt->vmalloc_start)
+#else
+#define PTOV(X)		((unsigned long)(X) + 0xffffffff80000000lu - PHYS_START)
+#define VTOP(X)		((unsigned long)(X) > 0xffffffff80000000lu ? \
+			((unsigned long)(X) & 0x1ffffffflu) + PHYS_START : \
+			((unsigned long)(X) & 0x7ffffffffffffff) + PHYS_START)
+
+#define IS_VMALLOC_ADDR(X)	(vt->vmalloc_start && \
+				(ulong)(X) >= vt->vmalloc_start && \
+				(ulong)(X) < 0xffffffff80000000)
+#endif
 
 #define DEFAULT_MODULES_VADDR	(machdep->kvbase - 16 * 1024 * 1024)
 #define MODULES_VADDR   	(machdep->machspec->modules_vaddr)
@@ -3257,7 +3282,7 @@ struct arm64_stackframe {
 
 #define _SECTION_SIZE_BITS	26
 #define _MAX_PHYSMEM_BITS	32
-#endif  /* MIPS */
+#endif  /* MIPS || MIPS64*/
 
 #ifdef X86
 #define _32BIT_
@@ -4292,6 +4317,10 @@ struct machine_specific {
 #define MAX_HEXADDR_STRLEN (8)
 #define UVADDR_PRLEN       (8)
 #endif
+#ifdef MIPS64
+#define MAX_HEXADDR_STRLEN (16)
+#define UVADDR_PRLEN       (16)
+#endif
 #ifdef SPARC64
 #define MAX_HEXADDR_STRLEN (16)
 #define UVADDR_PRLEN      (16)
@@ -4859,7 +4888,7 @@ void dump_build_data(void);
 #ifdef PPC64
 #define machdep_init(X) ppc64_init(X)
 #endif
-#ifdef MIPS
+#if defined(MIPS) || defined(MIPS64)
 #define machdep_init(X) mips_init(X)
 #endif
 #ifdef SPARC64
@@ -5315,7 +5344,7 @@ void display_help_screen(char *);
 #ifdef PPC64
 #define dump_machdep_table(X) ppc64_dump_machdep_table(X)
 #endif
-#ifdef MIPS
+#if defined(MIPS) || defined(MIPS64)
 #define dump_machdep_table(X) mips_dump_machdep_table(X)
 #endif
 #ifdef SPARC64
@@ -6186,7 +6215,7 @@ void s390x_dump_machdep_table(ulong);
  */
 void mips_display_regs_from_elf_notes(int, FILE *);
 
-#ifdef MIPS
+#if defined(MIPS) || defined(MIPS64)
 void mips_init(int);
 void mips_dump_machdep_table(ulong);
 
@@ -6248,7 +6277,7 @@ struct machine_specific {
 
 	struct mips_regset *crash_task_regs;
 };
-#endif /* MIPS */
+#endif /* MIPS || MIPS64 */
 
 /*
  * sparc64.c

@@ -14,7 +14,7 @@
  * GNU General Public License for more details.
  */
 
-#ifdef MIPS
+#if defined(MIPS) || defined(MIPS64)
 
 #include <elf.h>
 #include "defs.h"
@@ -47,15 +47,31 @@ typedef ulong pte_t;
 
 #define MIPS_CPU_RIXI	0x00800000llu
 
-#define MIPS32_EF_R0		6
-#define MIPS32_EF_R29		35
-#define MIPS32_EF_R31		37
-#define MIPS32_EF_LO		38
-#define MIPS32_EF_HI		39
-#define MIPS32_EF_CP0_EPC	40
-#define MIPS32_EF_CP0_BADVADDR	41
-#define MIPS32_EF_CP0_STATUS	42
-#define MIPS32_EF_CP0_CAUSE	43
+#ifdef MIPS
+/* 32b */
+#define MIPS_EF_R0		6
+#define MIPS_EF_R29		35
+#define MIPS_EF_R31		37
+#define MIPS_EF_LO		38
+#define MIPS_EF_HI		39
+#define MIPS_EF_CP0_EPC		40
+#define MIPS_EF_CP0_BADVADDR	41
+#define MIPS_EF_CP0_STATUS	42
+#define MIPS_EF_CP0_CAUSE	43
+typedef Elf32_Nhdr Elf_Nhdr;
+#else
+/* 64b */
+#define MIPS_EF_R0		0
+#define MIPS_EF_R29		29
+#define MIPS_EF_R31		31
+#define MIPS_EF_LO		32
+#define MIPS_EF_HI		33
+#define MIPS_EF_CP0_EPC		34
+#define MIPS_EF_CP0_BADVADDR	35
+#define MIPS_EF_CP0_STATUS	36
+#define MIPS_EF_CP0_CAUSE	37
+typedef Elf64_Nhdr Elf_Nhdr;
+#endif
 
 static struct machine_specific mips_machine_specific = { 0 };
 
@@ -226,6 +242,7 @@ mips_pgd_vtop(ulong *pgd, ulong vaddr, physaddr_t *paddr, int verbose)
 	if (verbose) {
 		const char *segment;
 
+#ifdef MIPS
 		if (vaddr < 0x80000000lu)
 			segment = "useg";
 		else if (vaddr < 0xa0000000lu)
@@ -236,11 +253,36 @@ mips_pgd_vtop(ulong *pgd, ulong vaddr, physaddr_t *paddr, int verbose)
 			segment = "ksseg";
 		else
 			segment = "kseg3";
+#else
+		if (vaddr < 0x80000000lu)
+			segment = "useg";
+		else if (vaddr < 0x4000000000000000lu)
+			segment = "xuseg";
+		else if (vaddr < 0x8000000000000000lu)
+			segment = "xsseg";
+		else if (vaddr < 0xc000000000000000lu)
+			segment = "xkphys";
+		else if (vaddr < 0xffffffff80000000lu)
+			segment = "xkseg";
+		else if (vaddr < 0xffffffffa0000000lu)
+			segment = "kseg0";
+		else if (vaddr < 0xffffffffc0000000lu)
+			segment = "kseg1";
+		else if (vaddr < 0xffffffffe0000000lu)
+			segment = "ksseg";
+		else
+			segment = "kseg3";
+#endif
 
 		fprintf(fp, "SEGMENT: %s\n", segment);
 	}
 
+#ifdef MIPS
 	if (vaddr >= 0x80000000lu && vaddr < 0xc0000000lu) {
+#else
+	if ((vaddr >= 0xffffffff80000000lu && vaddr < 0xffffffffc0000000lu) ||
+	    (vaddr >= 0x8000000000000000lu && vaddr < 0xc000000000000000lu)) {
+#endif
 		*paddr = VTOP(vaddr);
 		return TRUE;
 	}
@@ -555,7 +597,7 @@ mips_back_trace_cmd(struct bt_info *bt)
 
 	if (bt->machdep) {
 		struct mips_regset *regs = bt->machdep;
-		previous.pc = current.ra = regs->regs[MIPS32_EF_R31];
+		previous.pc = current.ra = regs->regs[MIPS_EF_R31];
 	}
 
 	while (INSTACK(current.sp, bt)) {
@@ -670,8 +712,8 @@ mips_dumpfile_stack_frame(struct bt_info *bt, ulong *nip, ulong *ksp)
 	}
 
 	regs = &ms->crash_task_regs[bt->tc->processor];
-	epc = regs->regs[MIPS32_EF_CP0_EPC];
-	r29 = regs->regs[MIPS32_EF_R29];
+	epc = regs->regs[MIPS_EF_CP0_EPC];
+	r29 = regs->regs[MIPS_EF_R29];
 
 	if (!epc && !r29) {
 		bt->flags |= BT_REGS_NOT_FOUND;
@@ -802,7 +844,7 @@ mips_get_crash_notes(void)
 {
 	struct machine_specific *ms = machdep->machspec;
 	ulong crash_notes;
-	Elf32_Nhdr *note;
+	Elf_Nhdr *note;
 	ulong offset;
 	char *buf, *p;
 	ulong *notes_ptrs;
@@ -850,8 +892,8 @@ mips_get_crash_notes(void)
 		/*
 		 * Do some sanity checks for this note before reading registers from it.
 		 */
-		note = (Elf32_Nhdr *)buf;
-		p = buf + sizeof(Elf32_Nhdr);
+		note = (Elf_Nhdr *)buf;
+		p = buf + sizeof(Elf_Nhdr);
 
 		/*
 		 * dumpfiles created with qemu won't have crash_notes, but there will
@@ -868,9 +910,9 @@ mips_get_crash_notes(void)
 				 * SIZE(note_buf) accounts for a "final note", which is a
 				 * trailing empty elf note header.
 				 */
-				long notesz = SIZE(note_buf) - sizeof(Elf32_Nhdr);
+				long notesz = SIZE(note_buf) - sizeof(Elf_Nhdr);
 
-				if (sizeof(Elf32_Nhdr) + roundup(note->n_namesz, 4) +
+				if (sizeof(Elf_Nhdr) + roundup(note->n_namesz, 4) +
 				    note->n_descsz == notesz)
 					BCOPY((char *)note, buf, notesz);
 			} else {
@@ -893,7 +935,7 @@ mips_get_crash_notes(void)
 		 * Find correct location of note data. This contains elf_prstatus
 		 * structure which has registers etc. for the crashed task.
 		 */
-		offset = sizeof(Elf32_Nhdr);
+		offset = sizeof(Elf_Nhdr);
 		offset = roundup(offset + note->n_namesz, 4);
 		p = buf + offset; /* start of elf_prstatus */
 
@@ -931,7 +973,7 @@ static int mips_get_elf_notes(void)
 		error(FATAL, "cannot calloc panic_task_regs space\n");
 
 	for (i = 0; i < kt->cpus; i++) {
-		Elf32_Nhdr *note = NULL;
+		Elf_Nhdr *note = NULL;
 		size_t len;
 
 		if (DISKDUMP_DUMPFILE())
@@ -945,7 +987,7 @@ static int mips_get_elf_notes(void)
 			continue;
 		}
 
-		len = sizeof(Elf32_Nhdr);
+		len = sizeof(Elf_Nhdr);
 		len = roundup(len + note->n_namesz, 4);
 
 		BCOPY((char *)note + len + OFFSET(elf_prstatus_pr_reg),
@@ -1061,6 +1103,13 @@ mips_get_page_size(void)
 	return next->value - spd->value;
 }
 
+#ifdef MIPS64
+static int mips64_is_uvaddr(ulong addr, struct task_context *tc)
+{
+	return (addr < 0x4000000000000000);
+}
+#endif
+
 void
 mips_init(int when)
 {
@@ -1101,10 +1150,18 @@ mips_init(int when)
 		if ((machdep->ptbl = malloc(PAGESIZE())) == NULL)
 			error(FATAL, "cannot malloc ptbl space.");
 
+#ifdef MIPS
 	        machdep->kvbase = 0x80000000;
+#else
+	        machdep->kvbase = 0x8000000000000000;
+#endif
 		machdep->identity_map_base = machdep->kvbase;
                 machdep->is_kvaddr = generic_is_kvaddr;
+#ifdef MIPS
                 machdep->is_uvaddr = generic_is_uvaddr;
+#else
+                machdep->is_uvaddr = mips64_is_uvaddr;
+#endif
 	        machdep->uvtop = mips_uvtop;
 	        machdep->kvtop = mips_kvtop;
 		machdep->vmalloc_start = mips_vmalloc_start;
@@ -1169,7 +1226,7 @@ mips_display_regs_from_elf_notes(int cpu, FILE *ofp)
 	}
 
 	regs = &ms->crash_task_regs[cpu];
-	if (!regs->regs[MIPS32_EF_R29] && !regs->regs[MIPS32_EF_CP0_EPC]) {
+	if (!regs->regs[MIPS_EF_R29] && !regs->regs[MIPS_EF_CP0_EPC]) {
 		error(INFO, "registers not collected for cpu %d\n", cpu);
 		return;
 	}
@@ -1189,44 +1246,44 @@ mips_display_regs_from_elf_notes(int cpu, FILE *ofp)
 		"       LO: %08lx        HI: %08lx\n"
 		"      EPC: %08lx  BADVADDR: %08lx\n"
 		"   STATUS: %08lx     CAUSE: %08lx\n",
-		regs->regs[MIPS32_EF_R0],
-		regs->regs[MIPS32_EF_R0 + 1],
-		regs->regs[MIPS32_EF_R0 + 2],
-		regs->regs[MIPS32_EF_R0 + 3],
-		regs->regs[MIPS32_EF_R0 + 4],
-		regs->regs[MIPS32_EF_R0 + 5],
-		regs->regs[MIPS32_EF_R0 + 6],
-		regs->regs[MIPS32_EF_R0 + 7],
-		regs->regs[MIPS32_EF_R0 + 8],
-		regs->regs[MIPS32_EF_R0 + 9],
-		regs->regs[MIPS32_EF_R0 + 10],
-		regs->regs[MIPS32_EF_R0 + 11],
-		regs->regs[MIPS32_EF_R0 + 12],
-		regs->regs[MIPS32_EF_R0 + 13],
-		regs->regs[MIPS32_EF_R0 + 14],
-		regs->regs[MIPS32_EF_R0 + 15],
-		regs->regs[MIPS32_EF_R0 + 16],
-		regs->regs[MIPS32_EF_R0 + 17],
-		regs->regs[MIPS32_EF_R0 + 18],
-		regs->regs[MIPS32_EF_R0 + 19],
-		regs->regs[MIPS32_EF_R0 + 20],
-		regs->regs[MIPS32_EF_R0 + 21],
-		regs->regs[MIPS32_EF_R0 + 22],
-		regs->regs[MIPS32_EF_R0 + 23],
-		regs->regs[MIPS32_EF_R0 + 24],
-		regs->regs[MIPS32_EF_R0 + 25],
-		regs->regs[MIPS32_EF_R0 + 26],
-		regs->regs[MIPS32_EF_R0 + 27],
-		regs->regs[MIPS32_EF_R0 + 28],
-		regs->regs[MIPS32_EF_R0 + 29],
-		regs->regs[MIPS32_EF_R0 + 30],
-		regs->regs[MIPS32_EF_R0 + 31],
-		regs->regs[MIPS32_EF_LO],
-		regs->regs[MIPS32_EF_HI],
-		regs->regs[MIPS32_EF_CP0_EPC],
-		regs->regs[MIPS32_EF_CP0_BADVADDR],
-		regs->regs[MIPS32_EF_CP0_STATUS],
-		regs->regs[MIPS32_EF_CP0_CAUSE]);
+		regs->regs[MIPS_EF_R0],
+		regs->regs[MIPS_EF_R0 + 1],
+		regs->regs[MIPS_EF_R0 + 2],
+		regs->regs[MIPS_EF_R0 + 3],
+		regs->regs[MIPS_EF_R0 + 4],
+		regs->regs[MIPS_EF_R0 + 5],
+		regs->regs[MIPS_EF_R0 + 6],
+		regs->regs[MIPS_EF_R0 + 7],
+		regs->regs[MIPS_EF_R0 + 8],
+		regs->regs[MIPS_EF_R0 + 9],
+		regs->regs[MIPS_EF_R0 + 10],
+		regs->regs[MIPS_EF_R0 + 11],
+		regs->regs[MIPS_EF_R0 + 12],
+		regs->regs[MIPS_EF_R0 + 13],
+		regs->regs[MIPS_EF_R0 + 14],
+		regs->regs[MIPS_EF_R0 + 15],
+		regs->regs[MIPS_EF_R0 + 16],
+		regs->regs[MIPS_EF_R0 + 17],
+		regs->regs[MIPS_EF_R0 + 18],
+		regs->regs[MIPS_EF_R0 + 19],
+		regs->regs[MIPS_EF_R0 + 20],
+		regs->regs[MIPS_EF_R0 + 21],
+		regs->regs[MIPS_EF_R0 + 22],
+		regs->regs[MIPS_EF_R0 + 23],
+		regs->regs[MIPS_EF_R0 + 24],
+		regs->regs[MIPS_EF_R0 + 25],
+		regs->regs[MIPS_EF_R0 + 26],
+		regs->regs[MIPS_EF_R0 + 27],
+		regs->regs[MIPS_EF_R0 + 28],
+		regs->regs[MIPS_EF_R0 + 29],
+		regs->regs[MIPS_EF_R0 + 30],
+		regs->regs[MIPS_EF_R0 + 31],
+		regs->regs[MIPS_EF_LO],
+		regs->regs[MIPS_EF_HI],
+		regs->regs[MIPS_EF_CP0_EPC],
+		regs->regs[MIPS_EF_CP0_BADVADDR],
+		regs->regs[MIPS_EF_CP0_STATUS],
+		regs->regs[MIPS_EF_CP0_CAUSE]);
 }
 #else
 

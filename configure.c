@@ -119,6 +119,7 @@ void add_extra_lib(char *);
 #define ARM64   10
 #define MIPS    11
 #define SPARC64 12
+#define MIPS64  13
 
 #define TARGET_X86    "TARGET=X86"
 #define TARGET_ALPHA  "TARGET=ALPHA"
@@ -131,6 +132,7 @@ void add_extra_lib(char *);
 #define TARGET_ARM    "TARGET=ARM"
 #define TARGET_ARM64  "TARGET=ARM64"
 #define TARGET_MIPS   "TARGET=MIPS"
+#define TARGET_MIPS64 "TARGET=MIPS64"
 #define TARGET_SPARC64 "TARGET=SPARC64"
 
 #define TARGET_CFLAGS_X86    "TARGET_CFLAGS=-D_FILE_OFFSET_BITS=64"
@@ -152,6 +154,8 @@ void add_extra_lib(char *);
 #define TARGET_CFLAGS_MIPS            "TARGET_CFLAGS=-D_FILE_OFFSET_BITS=64"
 #define TARGET_CFLAGS_MIPS_ON_X86     "TARGET_CFLAGS=-D_FILE_OFFSET_BITS=64"
 #define TARGET_CFLAGS_MIPS_ON_X86_64  "TARGET_CFLAGS=-m32 -D_FILE_OFFSET_BITS=64"
+#define TARGET_CFLAGS_MIPS64            "TARGET_CFLAGS="
+#define TARGET_CFLAGS_MIPS64_ON_X86_64  "TARGET_CFLAGS="
 #define TARGET_CFLAGS_SPARC64         "TARGET_CFLAGS="
 
 #define GDB_TARGET_DEFAULT        "GDB_CONF_FLAGS="
@@ -163,6 +167,7 @@ void add_extra_lib(char *);
 #define GDB_TARGET_PPC64_ON_X86_64  "GDB_CONF_FLAGS=--target=powerpc64le-unknown-linux-gnu"
 #define GDB_TARGET_MIPS_ON_X86     "GDB_CONF_FLAGS=--target=mipsel-elf-linux"
 #define GDB_TARGET_MIPS_ON_X86_64  "GDB_CONF_FLAGS=--target=mipsel-elf-linux CFLAGS=-m32"
+#define GDB_TARGET_MIPS64_ON_X86_64  "GDB_CONF_FLAGS=--target=mipsel-elf-linux"
      
 /*
  *  The original plan was to allow the use of a particular version
@@ -410,6 +415,12 @@ get_current_configuration(struct supported_gdb_version *sp)
 			 */
 			target_data.target = MIPS;
 		} else if ((target_data.target == X86_64) &&
+			   (name_to_target((char *)target_data.target_as_param) == MIPS64)) {
+			/*
+			 *  Build an MIPS64 crash binary on an X86_64 host.
+			 */
+			target_data.target = MIPS64;
+		} else if ((target_data.target == X86_64) &&
 			(name_to_target((char *)target_data.target_as_param) == X86)) {
 			/*
 			 *  Build an X86 crash binary on an X86_64 host.
@@ -473,6 +484,20 @@ get_current_configuration(struct supported_gdb_version *sp)
 			else
 				arch_mismatch(sp);
 		}
+		if ((target_data.target == MIPS) &&
+		    (target_data.initial_gdb_target != MIPS))
+			arch_mismatch(sp);
+
+		if ((target_data.initial_gdb_target == MIPS64) &&
+		    (target_data.target != MIPS64)) {
+			if (target_data.target == X86_64)
+				target_data.target = MIPS64;
+			else
+				arch_mismatch(sp);
+		}
+		if ((target_data.target == MIPS64) &&
+		    (target_data.initial_gdb_target != MIPS64))
+			arch_mismatch(sp);
 
 		if ((target_data.initial_gdb_target == X86) &&
 		    (target_data.target != X86)) {
@@ -631,6 +656,9 @@ show_configuration(void)
 	case MIPS:
 		printf("TARGET: MIPS\n");
 		break;
+	case MIPS64:
+		printf("TARGET: MIPS64\n");
+		break;
 	case SPARC64:
 		printf("TARGET: SPARC64\n");
 		break;
@@ -743,6 +771,14 @@ build_configure(struct supported_gdb_version *sp)
 		} else
                         target_CFLAGS = TARGET_CFLAGS_MIPS;
                 break;
+	case MIPS64:
+		target = TARGET_MIPS64;
+		if (target_data.host == X86_64) {
+			target_CFLAGS = TARGET_CFLAGS_MIPS64_ON_X86_64;
+			gdb_conf_flags = GDB_TARGET_MIPS64_ON_X86_64;
+		} else
+			target_CFLAGS = TARGET_CFLAGS_MIPS64;
+		break;
 	case SPARC64:
 		target = TARGET_SPARC64;
 		target_CFLAGS = TARGET_CFLAGS_SPARC64;
@@ -1573,6 +1609,8 @@ set_initial_target(struct supported_gdb_version *sp)
 		target_data.initial_gdb_target = ARM;
 	else if (strncmp(buf, "MIPS", strlen("MIPS")) == 0)
 		target_data.initial_gdb_target = MIPS;
+	else if (strncmp(buf, "MIPS64", strlen("MIPS64")) == 0)
+		target_data.initial_gdb_target = MIPS64;
 	else if (strncmp(buf, "SPARC64", strlen("SPARC64")) == 0)
 		target_data.initial_gdb_target = SPARC64;
 }
@@ -1593,6 +1631,7 @@ target_to_name(int target)
 	case ARM:    return("ARM"); 
 	case ARM64:  return("ARM64");
 	case MIPS:   return("MIPS");
+	case MIPS64: return("MIPS64");
 	case SPARC64: return("SPARC64");
 	}
 
@@ -1648,6 +1687,11 @@ name_to_target(char *name)
                 return ARM;
         else if (strncmp(name, "arm", strlen("arm")) == 0)
                 return ARM;
+	/* mips64 should be checked prior to mips due to strncmp */
+        else if (strncmp(name, "mips64", strlen("mips64")) == 0)
+                return MIPS64;
+        else if (strncmp(name, "MIPS64", strlen("MIPS64")) == 0)
+                return MIPS64;
         else if (strncmp(name, "mips", strlen("mips")) == 0)
                 return MIPS;
         else if (strncmp(name, "MIPS", strlen("MIPS")) == 0)

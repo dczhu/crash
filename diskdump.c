@@ -572,6 +572,9 @@ restart:
 	else if (STRNEQ(header->utsname.machine, "mips") &&
 	    machine_type_mismatch(file, "MIPS", NULL, 0))
 		goto err;
+	else if (STRNEQ(header->utsname.machine, "mips64") &&
+	    machine_type_mismatch(file, "MIPS64", NULL, 0))
+		goto err;
 	else if (STRNEQ(header->utsname.machine, "s390x") &&
 	    machine_type_mismatch(file, "S390X", NULL, 0))
 		goto err;
