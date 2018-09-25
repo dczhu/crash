@@ -1607,10 +1607,10 @@ set_initial_target(struct supported_gdb_version *sp)
 		target_data.initial_gdb_target = ARM64;
 	else if (strncmp(buf, "ARM", strlen("ARM")) == 0)
 		target_data.initial_gdb_target = ARM;
-	else if (strncmp(buf, "MIPS", strlen("MIPS")) == 0)
-		target_data.initial_gdb_target = MIPS;
 	else if (strncmp(buf, "MIPS64", strlen("MIPS64")) == 0)
 		target_data.initial_gdb_target = MIPS64;
+	else if (strncmp(buf, "MIPS", strlen("MIPS")) == 0)
+		target_data.initial_gdb_target = MIPS;
 	else if (strncmp(buf, "SPARC64", strlen("SPARC64")) == 0)
 		target_data.initial_gdb_target = SPARC64;
 }
