@@ -7136,7 +7136,8 @@ panic_search(void)
 		}
 
 		if (strstr(buf, " crash_kexec at ") ||
-		    strstr(buf, " .crash_kexec at ")) {
+		    strstr(buf, " .crash_kexec at ") ||
+		    strstr(buf, " __crash_kexec at ")) {
 			found = TRUE;
 			break;	
 		}
