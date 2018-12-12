@@ -114,6 +114,26 @@
 #define Elf_Nhdr Elf32_Nhdr
 #endif
 
+#ifdef MIPS64
+#define ELF_EXEC_PAGESIZE PAGESIZE()
+
+#define ELF_MACHINE EM_MIPS
+#define ELF_OSABI ELFOSABI_NONE
+
+#define ELF_CLASS ELFCLASS64
+#define ELF_DATA ELFDATA2LSB
+#define ELF_ARCH EM_MIPS
+
+#define Elf_Half Elf64_Half
+#define Elf_Word Elf64_Word
+#define Elf_Off Elf64_Off
+
+#define Elf_Ehdr Elf64_Ehdr
+#define Elf_Phdr Elf64_Phdr
+#define Elf_Shdr Elf64_Shdr
+#define Elf_Nhdr Elf64_Nhdr
+#endif
+
 #ifdef ARM64
 #define ELF_EXEC_PAGESIZE PAGESIZE()
 
@@ -312,6 +332,11 @@ extern void gcore_default_regsets_init(void);
 
 #ifdef MIPS
 #define REGSET_VIEW_NAME "mips"
+#define REGSET_VIEW_MACHINE EM_MIPS
+#endif
+
+#ifdef MIPS64
+#define REGSET_VIEW_NAME "mips64"
 #define REGSET_VIEW_MACHINE EM_MIPS
 #endif
 
@@ -619,7 +644,7 @@ struct user_regs_struct32{
 #endif /* GCORE_ARCH_COMPAT */
 #endif
 
-#ifdef MIPS
+#if defined(MIPS) || defined(MIPS64)
 struct user_regs_struct {
 	unsigned long gregs[45];
 };
@@ -651,7 +676,7 @@ struct user_regs_struct {
 };
 #endif
 
-#if defined(X86) || defined(X86_64) || defined(ARM) || defined(MIPS)
+#if defined(X86) || defined(X86_64) || defined(ARM) || defined(MIPS) || defined(MIPS64)
 typedef ulong elf_greg_t;
 #define ELF_NGREG (sizeof(struct user_regs_struct) / sizeof(elf_greg_t))
 typedef elf_greg_t elf_gregset_t[ELF_NGREG];
@@ -660,7 +685,7 @@ typedef elf_greg_t elf_gregset_t[ELF_NGREG];
 #if defined(X86) || defined(ARM) || defined(MIPS)
 #define PAGE_SIZE 4096
 #endif
-#if defined(ARM64) || defined(PPC64)
+#if defined(ARM64) || defined(PPC64) || defined(MIPS64)
 #define PAGE_SIZE PAGESIZE()
 #endif
 
@@ -814,7 +839,7 @@ struct elf_prstatus
 	int pr_fpvalid;		/* True if math co-processor being used.  */
 };
 
-#if defined(X86) || defined(X86_64) || defined(ARM) || defined(MIPS)
+#if defined(X86) || defined(X86_64) || defined(ARM) || defined(MIPS) || defined(MIPS64)
 typedef unsigned short __kernel_old_uid_t;
 typedef unsigned short __kernel_old_gid_t;
 #endif
@@ -834,7 +859,7 @@ typedef __kernel_gid_t  __kernel_old_gid_t;
 typedef __kernel_old_uid_t      old_uid_t;
 typedef __kernel_old_gid_t      old_gid_t;
 
-#if defined(X86) || defined(ARM) || defined(MIPS)
+#if defined(X86) || defined(ARM) || defined(MIPS) || defined(MIPS64)
 typedef unsigned short __kernel_uid_t;
 typedef unsigned short __kernel_gid_t;
 #endif

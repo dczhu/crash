@@ -12,7 +12,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
-#if defined(MIPS)
+#if defined(MIPS) || defined(MIPS64)
 
 #include "defs.h"
 #include <gcore_defs.h>
@@ -20,17 +20,31 @@
 #include <elf.h>
 #include <asm/ldt.h>
 
-#define MIPS32_EF_R0		6
-#define MIPS32_EF_R1		7
-#define MIPS32_EF_R26		32
-#define MIPS32_EF_R27		33
-#define MIPS32_EF_R31		37
-#define MIPS32_EF_LO		38
-#define MIPS32_EF_HI		39
-#define MIPS32_EF_CP0_EPC	40
-#define MIPS32_EF_CP0_BADVADDR	41
-#define MIPS32_EF_CP0_STATUS	42
-#define MIPS32_EF_CP0_CAUSE	43
+#ifdef MIPS
+#define MIPS_EF_R0		6
+#define MIPS_EF_R1		7
+#define MIPS_EF_R26		32
+#define MIPS_EF_R27		33
+#define MIPS_EF_R31		37
+#define MIPS_EF_LO		38
+#define MIPS_EF_HI		39
+#define MIPS_EF_CP0_EPC		40
+#define MIPS_EF_CP0_BADVADDR	41
+#define MIPS_EF_CP0_STATUS	42
+#define MIPS_EF_CP0_CAUSE	43
+#else
+#define MIPS_EF_R0		0
+#define MIPS_EF_R1		1
+#define MIPS_EF_R26		26
+#define MIPS_EF_R27		27
+#define MIPS_EF_R31		31
+#define MIPS_EF_LO		32
+#define MIPS_EF_HI		33
+#define MIPS_EF_CP0_EPC		34
+#define MIPS_EF_CP0_BADVADDR	35
+#define MIPS_EF_CP0_STATUS	36
+#define MIPS_EF_CP0_CAUSE	37
+#endif
 
 static int gpr_get(struct task_context *target,
 		       const struct user_regset *regset,
@@ -70,20 +84,20 @@ static int gpr_get(struct task_context *target,
 
 	BZERO(regs, sizeof(*regs));
 
-	for (i = MIPS32_EF_R1; i <= MIPS32_EF_R31; i++) {
+	for (i = MIPS_EF_R1; i <= MIPS_EF_R31; i++) {
 		/* k0/k1 are copied as zero. */
-		if (i == MIPS32_EF_R26 || i == MIPS32_EF_R27)
+		if (i == MIPS_EF_R26 || i == MIPS_EF_R27)
 			continue;
 
-		regs->gregs[i] = mains->regs[i - MIPS32_EF_R0];
+		regs->gregs[i] = mains->regs[i - MIPS_EF_R0];
 	}
 
-	regs->gregs[MIPS32_EF_LO] = mains->lo;
-	regs->gregs[MIPS32_EF_HI] = mains->hi;
-	regs->gregs[MIPS32_EF_CP0_EPC] = cp0->cp0_epc;
-	regs->gregs[MIPS32_EF_CP0_BADVADDR] = cp0->cp0_badvaddr;
-	regs->gregs[MIPS32_EF_CP0_STATUS] = mains->cp0_status;
-	regs->gregs[MIPS32_EF_CP0_CAUSE] = cp0->cp0_cause;
+	regs->gregs[MIPS_EF_LO] = mains->lo;
+	regs->gregs[MIPS_EF_HI] = mains->hi;
+	regs->gregs[MIPS_EF_CP0_EPC] = cp0->cp0_epc;
+	regs->gregs[MIPS_EF_CP0_BADVADDR] = cp0->cp0_badvaddr;
+	regs->gregs[MIPS_EF_CP0_STATUS] = mains->cp0_status;
+	regs->gregs[MIPS_EF_CP0_CAUSE] = cp0->cp0_cause;
 
 	return 0;
 }
