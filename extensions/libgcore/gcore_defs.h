@@ -682,10 +682,10 @@ typedef ulong elf_greg_t;
 typedef elf_greg_t elf_gregset_t[ELF_NGREG];
 #endif
 
-#if defined(X86) || defined(ARM) || defined(MIPS)
+#if defined(X86) || defined(ARM)
 #define PAGE_SIZE 4096
 #endif
-#if defined(ARM64) || defined(PPC64) || defined(MIPS64)
+#if defined(ARM64) || defined(PPC64) || defined(MIPS) || defined(MIPS64)
 #define PAGE_SIZE PAGESIZE()
 #endif
 
