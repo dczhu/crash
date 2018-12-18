@@ -310,7 +310,7 @@ mips_pgd_vtop(ulong *pgd, ulong vaddr, physaddr_t *paddr, int verbose)
 	if (verbose)
 		fprintf(fp, "  PTE: %08lx => %08lx\n", page_table, pte);
 
-	if (!(pte & _PAGE_PRESENT)) {
+	if (!(pte & _PAGE_PRESENT) || (!(pte & _PAGE_READ) && !(pte & _PAGE_WRITE))) {
 		if (verbose) {
 			fprintf(fp, "\n");
 			mips_translate_pte((ulong)pte, 0, pte);
