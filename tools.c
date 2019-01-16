@@ -1,8 +1,8 @@
 /* tools.c - core analysis suite
  *
  * Copyright (C) 1999, 2000, 2001, 2002 Mission Critical Linux, Inc.
- * Copyright (C) 2002-2017 David Anderson
- * Copyright (C) 2002-2017 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2002-2018 David Anderson
+ * Copyright (C) 2002-2018 Red Hat, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -4193,6 +4193,7 @@ dump_struct_members(struct list_data *ld, int idx, ulong next)
 
 #define RADIXTREE_REQUEST (0x1)
 #define RBTREE_REQUEST    (0x2)
+#define XARRAY_REQUEST    (0x4)
 
 void
 cmd_tree()
@@ -4214,7 +4215,7 @@ cmd_tree()
 		switch (c)
 		{
 		case 't':
-			if (type_flag & (RADIXTREE_REQUEST|RBTREE_REQUEST)) {
+			if (type_flag & (RADIXTREE_REQUEST|RBTREE_REQUEST|XARRAY_REQUEST)) {
 				error(INFO, "multiple tree types may not be entered\n");
 				cmd_usage(pc->curcmd, SYNOPSIS);
 			}
@@ -4223,6 +4224,8 @@ cmd_tree()
 				type_flag = RADIXTREE_REQUEST;
 			else if (STRNEQ(optarg, "rb"))
 				type_flag = RBTREE_REQUEST;
+			else if (STRNEQ(optarg, "x"))
+				type_flag = XARRAY_REQUEST;
 			else {
 				error(INFO, "invalid tree type: %s\n", optarg);
 				cmd_usage(pc->curcmd, SYNOPSIS);
@@ -4307,11 +4310,13 @@ cmd_tree()
 	if (argerrs)
 		cmd_usage(pc->curcmd, SYNOPSIS);
 
-	if ((type_flag & RADIXTREE_REQUEST) && (td->flags & TREE_LINEAR_ORDER))
-		error(FATAL, "-l option is not applicable to radix trees\n");
+	if ((type_flag & (XARRAY_REQUEST|RADIXTREE_REQUEST)) && (td->flags & TREE_LINEAR_ORDER))
+		error(FATAL, "-l option is not applicable to %s\n", 
+			type_flag & RADIXTREE_REQUEST ? "radix trees" : "Xarrays");
 
-	if ((type_flag & RADIXTREE_REQUEST) && (td->flags & TREE_NODE_OFFSET_ENTERED))
-		error(FATAL, "-o option is not applicable to radix trees\n");
+	if ((type_flag & (XARRAY_REQUEST|RADIXTREE_REQUEST)) && (td->flags & TREE_NODE_OFFSET_ENTERED))
+		error(FATAL, "-o option is not applicable to %s\n",
+			type_flag & RADIXTREE_REQUEST ? "radix trees" : "Xarrays");
 
 	if ((td->flags & TREE_ROOT_OFFSET_ENTERED) && 
 	    (td->flags & TREE_NODE_POINTER))
@@ -4386,8 +4391,15 @@ next_arg:
 			fprintf(fp, "%sTREE_STRUCT_RADIX_16",
 				others++ ? "|" : "");
 		fprintf(fp, ")\n");
-		fprintf(fp, "              type: %s\n",
-			type_flag & RADIXTREE_REQUEST ? "radix" : "red-black");
+		fprintf(fp, "              type: ");
+			if (type_flag & RADIXTREE_REQUEST)
+				fprintf(fp, "radix\n");
+			else if (type_flag & XARRAY_REQUEST)
+				fprintf(fp, "xarray\n");
+			else
+				fprintf(fp, "red-black%s", 
+					type_flag & RBTREE_REQUEST ? 
+					"\n" : " (default)\n");
 		fprintf(fp, "      node pointer: %s\n",
 			td->flags & TREE_NODE_POINTER ? "yes" : "no");
 		fprintf(fp, "             start: %lx\n", td->start);
@@ -4402,6 +4414,8 @@ next_arg:
 	hq_open();
 	if (type_flag & RADIXTREE_REQUEST)
 		do_rdtree(td);
+	else if (type_flag & XARRAY_REQUEST)
+		do_xatree(td);
 	else
 		do_rbtree(td);
 	hq_close();
@@ -4564,6 +4578,120 @@ error_height:
 	return -1;
 }
 
+static ulong XA_CHUNK_SHIFT = UNINITIALIZED;
+static ulong XA_CHUNK_SIZE = UNINITIALIZED;
+static ulong XA_CHUNK_MASK = UNINITIALIZED;
+
+static void 
+do_xarray_iter(ulong node, uint height, char *path,
+	       ulong index, struct xarray_ops *ops)
+{
+	uint off;
+
+	if (!hq_enter(node))
+		error(FATAL,
+			"\nduplicate tree node: %lx\n", node);
+
+	for (off = 0; off < XA_CHUNK_SIZE; off++) {
+		ulong slot;
+		ulong shift = (height - 1) * XA_CHUNK_SHIFT;
+
+		readmem(node + OFFSET(xa_node_slots) +
+			sizeof(void *) * off, KVADDR, &slot, sizeof(void *),
+			"xa_node.slots[off]", FAULT_ON_ERROR);
+		if (!slot)
+			continue;
+
+		if ((slot & XARRAY_TAG_MASK) == XARRAY_TAG_INTERNAL)
+			slot &= ~XARRAY_TAG_INTERNAL;
+
+		if (height == 1)
+			ops->entry(node, slot, path, index | off, ops->private);
+		else {
+			ulong child_index = index | (off << shift);
+			char child_path[BUFSIZE];
+			sprintf(child_path, "%s/%d", path, off);
+			do_xarray_iter(slot, height - 1,
+					   child_path, child_index, ops);
+		}
+	}
+}
+
+int 
+do_xarray_traverse(ulong ptr, int is_root, struct xarray_ops *ops)
+{
+	ulong node_p;
+	long nlen;
+	uint height, is_internal;
+	unsigned char shift;
+	char path[BUFSIZE];
+
+	if (!VALID_STRUCT(xarray) || !VALID_STRUCT(xa_node) ||
+	      !VALID_MEMBER(xarray_xa_head) ||
+	      !VALID_MEMBER(xa_node_slots) ||
+	      !VALID_MEMBER(xa_node_shift)) 
+		error(FATAL, 
+			"xarray facility does not exist or has changed its format\n");
+
+	if (XA_CHUNK_SHIFT == UNINITIALIZED) {
+		if ((nlen = MEMBER_SIZE("xa_node", "slots")) <= 0)
+			error(FATAL, "cannot determine length of xa_node.slots[] array\n");
+		nlen /= sizeof(void *);
+		XA_CHUNK_SHIFT = ffsl(nlen) - 1;
+		XA_CHUNK_SIZE = (1UL << XA_CHUNK_SHIFT);
+		XA_CHUNK_MASK = (XA_CHUNK_SIZE-1);
+	}
+
+	height = 0;
+	if (!is_root) {
+		node_p = ptr;
+
+		if ((node_p & XARRAY_TAG_MASK) == XARRAY_TAG_INTERNAL)
+			node_p &= ~XARRAY_TAG_MASK;
+
+		if (VALID_MEMBER(xa_node_shift)) {
+			readmem(node_p + OFFSET(xa_node_shift), KVADDR,
+				&shift, sizeof(shift), "xa_node shift",
+				FAULT_ON_ERROR);
+			height = (shift / XA_CHUNK_SHIFT) + 1;
+		} else
+			error(FATAL, "-N option is not supported or applicable"
+				" for xarrays on this architecture or kernel\n");
+	} else {
+		readmem(ptr + OFFSET(xarray_xa_head), KVADDR, &node_p,
+			sizeof(void *), "xarray xa_head", FAULT_ON_ERROR);
+		is_internal = ((node_p & XARRAY_TAG_MASK) == XARRAY_TAG_INTERNAL);
+		if (node_p & XARRAY_TAG_MASK)
+			node_p &= ~XARRAY_TAG_MASK;
+
+		if (is_internal && VALID_MEMBER(xa_node_shift)) {
+			readmem(node_p + OFFSET(xa_node_shift), KVADDR, &shift,
+				sizeof(shift), "xa_node shift", FAULT_ON_ERROR);
+			height = (shift / XA_CHUNK_SHIFT) + 1;
+		}
+	}
+
+	if (CRASHDEBUG(1)) {
+		fprintf(fp, "xa_node.slots[%ld]\n", XA_CHUNK_SIZE);
+		fprintf(fp, "pointer at %lx (is_root? %s):\n",
+			node_p, is_root ? "yes" : "no");
+		if (is_root)
+			dump_struct("xarray", ptr, RADIX(ops->radix));
+		else
+			dump_struct("xa_node", node_p, RADIX(ops->radix));
+	}
+
+	if (height == 0) {
+		strcpy(path, "direct");
+		ops->entry(node_p, node_p, path, 0, ops->private);
+	} else {
+		strcpy(path, "root");
+		do_xarray_iter(node_p, height, path, 0, ops);
+	}
+
+	return 0;
+}
+
 static void do_rdtree_entry(ulong node, ulong slot, const char *path,
 			    ulong index, void *private)
 {
@@ -4588,7 +4716,7 @@ static void do_rdtree_entry(ulong node, ulong slot, const char *path,
 		fprintf(fp, "%lx\n", slot);
 
 	if (td->flags & TREE_POSITION_DISPLAY) {
-		fprintf(fp, "  position: %s/%ld\n",
+		fprintf(fp, "  index: %ld  position: %s/%ld\n", index,
 			path, index & RADIX_TREE_MAP_MASK);
 	}
 
@@ -4632,6 +4760,79 @@ int do_rdtree(struct tree_data *td)
 		ops.radix = 0;
 
 	do_radix_tree_traverse(td->start, is_root, &ops);
+
+	return 0;
+}
+
+
+static void do_xarray_entry(ulong node, ulong slot, const char *path,
+			    ulong index, void *private)
+{
+	struct tree_data *td = private;
+	static struct req_entry **e = NULL;
+	uint print_radix;
+	int i;
+
+	if (!td->count && td->structname_args) {
+		/*
+		 * Retrieve all members' info only once (count == 0)
+		 * After last iteration all memory will be freed up
+		 */
+		e = (struct req_entry **)GETBUF(sizeof(*e) * td->structname_args);
+		for (i = 0; i < td->structname_args; i++)
+			e[i] = fill_member_offsets(td->structname[i]);
+	}
+
+	td->count++;
+
+	if (td->flags & VERBOSE)
+		fprintf(fp, "%lx\n", slot);
+
+	if (td->flags & TREE_POSITION_DISPLAY) {
+		fprintf(fp, "  index: %ld  position: %s/%ld\n", index,
+			path, index & XA_CHUNK_MASK);
+	}
+
+	if (td->structname) {
+		if (td->flags & TREE_STRUCT_RADIX_10)
+			print_radix = 10;
+		else if (td->flags & TREE_STRUCT_RADIX_16)
+			print_radix = 16;
+		else
+			print_radix = 0;
+
+		for (i = 0; i < td->structname_args; i++) {
+			switch (count_chars(td->structname[i], '.')) {
+			case 0:
+				dump_struct(td->structname[i], slot, print_radix);
+				break;
+			default:
+				if (td->flags & TREE_PARSE_MEMBER)
+					dump_struct_members_for_tree(td, i, slot);
+				else if (td->flags & TREE_READ_MEMBER)
+					dump_struct_members_fast(e[i], print_radix, slot);
+				break;
+			}
+		}
+	}
+}
+
+int do_xatree(struct tree_data *td)
+{
+	struct xarray_ops ops = {
+		.entry		= do_xarray_entry,
+		.private	= td,
+	};
+	int is_root = !(td->flags & TREE_NODE_POINTER);
+
+	if (td->flags & TREE_STRUCT_RADIX_10)
+		ops.radix = 10;
+	else if (td->flags & TREE_STRUCT_RADIX_16)
+		ops.radix = 16;
+	else
+		ops.radix = 0;
+
+	do_xarray_traverse(td->start, is_root, &ops);
 
 	return 0;
 }

@@ -65,7 +65,25 @@ static ulong hugepage_dir(ulong pte);
 static ulong pgd_page_vaddr_l4(ulong pgd);
 static ulong pud_page_vaddr_l4(ulong pud);
 static ulong pmd_page_vaddr_l4(ulong pmd);
+static int is_opal_context(ulong sp, ulong nip);
 void opalmsg(void);
+
+static int is_opal_context(ulong sp, ulong nip)
+{
+	uint64_t opal_start, opal_end;
+
+	if (!(machdep->flags & OPAL_FW))
+		return FALSE;
+
+	opal_start = machdep->machspec->opal.base;
+	opal_end   = opal_start + machdep->machspec->opal.size;
+
+	if (((sp >= opal_start) && (sp < opal_end)) ||
+	    ((nip >= opal_start) && (nip < opal_end)))
+		return TRUE;
+
+	return FALSE;
+}
 
 static inline int is_hugepage(ulong pte)
 {
@@ -202,6 +220,33 @@ static int ppc64_is_vmaddr(ulong addr)
 	return (vt->vmalloc_start && addr >= vt->vmalloc_start);
 }
 
+#define is_RHEL8() (strstr(kt->proc_version, ".el8."))
+
+static int set_ppc64_max_physmem_bits(void)
+{
+	int dimension;
+
+	get_array_length("mem_section", &dimension, 0);
+
+	if ((machdep->flags & VMEMMAP) &&
+	    (THIS_KERNEL_VERSION >= LINUX(4,20,0)) &&
+	    !dimension && (machdep->pagesize == 65536)) {
+		/*
+		 * SPARSEMEM_VMEMMAP & SPARSEMEM_EXTREME configurations with
+		 * 64K pagesize and v4.20 kernel or later.
+		 */
+		machdep->max_physmem_bits = _MAX_PHYSMEM_BITS_4_20;
+	} else if ((machdep->flags & VMEMMAP) &&
+	    ((THIS_KERNEL_VERSION >= LINUX(4,19,0)) || is_RHEL8())) {
+		/* SPARSEMEM_VMEMMAP & v4.19 kernel or later, or RHEL8 */
+		machdep->max_physmem_bits = _MAX_PHYSMEM_BITS_4_19;
+	} else if (THIS_KERNEL_VERSION >= LINUX(3,7,0))
+		machdep->max_physmem_bits = _MAX_PHYSMEM_BITS_3_7;
+	else
+		machdep->max_physmem_bits = _MAX_PHYSMEM_BITS;
+
+	return 0;
+}
 
 struct machine_specific ppc64_machine_specific = { 
 	.hwintrstack = { 0 }, 
@@ -241,6 +286,7 @@ struct machine_specific book3e_machine_specific = {
 	.is_vmaddr = book3e_is_vmaddr,
 };
 
+#define SKIBOOT_BASE			0x30000000
 
 /*
  *  Do all necessary machine-specific setup here.  This is called several
@@ -360,6 +406,16 @@ ppc64_init(int when)
 	case POST_GDB:
 		if (!(machdep->flags & BOOK3E)) {
 			struct machine_specific *m = machdep->machspec;
+
+			/*
+			 * To determine if the kernel was running on OPAL based platform,
+			 * use struct opal, which is populated with relevant values.
+			 */
+			if (symbol_exists("opal")) {
+				get_symbol_data("opal", sizeof(struct ppc64_opal), &(m->opal));
+				if (m->opal.base == SKIBOOT_BASE)
+					machdep->flags |= OPAL_FW;
+			}
 
 			/*
 			 * On Power ISA 3.0 based server processors, a kernel can
@@ -554,10 +610,7 @@ ppc64_init(int when)
 			ppc64_vmemmap_init();
 
 		machdep->section_size_bits = _SECTION_SIZE_BITS;
-		if (THIS_KERNEL_VERSION >= LINUX(3,7,0))
-			machdep->max_physmem_bits = _MAX_PHYSMEM_BITS_3_7;
-		else
-			machdep->max_physmem_bits = _MAX_PHYSMEM_BITS;
+		set_ppc64_max_physmem_bits();
 
 		ppc64_init_cpu_info();
 		machdep->vmalloc_start = ppc64_vmalloc_start;
@@ -709,6 +762,8 @@ ppc64_dump_machdep_table(ulong arg)
 		fprintf(fp, "%sSWAP_ENTRY_L4", others++ ? "|" : "");
 	if (machdep->flags & RADIX_MMU)
 		fprintf(fp, "%sRADIX_MMU", others++ ? "|" : "");
+	if (machdep->flags & OPAL_FW)
+		fprintf(fp, "%sOPAL_FW", others++ ? "|" : "");
         fprintf(fp, ")\n");
 
 	fprintf(fp, "             kvbase: %lx\n", machdep->kvbase);
@@ -2254,7 +2309,11 @@ ppc64_vmcore_stack_frame(struct bt_info *bt_in, ulong *nip, ulong *ksp)
 {
 	struct ppc64_pt_regs *pt_regs;
 	unsigned long unip;
-	int in_user_space = FALSE;
+	/*
+	 * TRUE: task is running in a different context (userspace, OPAL..)
+	 * FALSE: task is probably running in kernel space.
+	 */
+	int out_of_context = FALSE;
 
 	pt_regs = (struct ppc64_pt_regs *)bt_in->machdep;
 	if (!pt_regs || !pt_regs->gpr[1]) {
@@ -2267,20 +2326,25 @@ ppc64_vmcore_stack_frame(struct bt_info *bt_in, ulong *nip, ulong *ksp)
 			bt_in->task);
 		return FALSE;
 	}
+
 	*ksp = pt_regs->gpr[1];
 	if (IS_KVADDR(*ksp)) {
 		readmem(*ksp+16, KVADDR, &unip, sizeof(ulong), "Regs NIP value",
 			FAULT_ON_ERROR);
 		*nip = unip;
 	} else {
+		*nip = pt_regs->nip;
 		if (IN_TASK_VMA(bt_in->task, *ksp)) {
 			fprintf(fp, "%0lx: Task is running in user space\n",
 				bt_in->task);
-			in_user_space = TRUE;
+			out_of_context = TRUE;
+		} else if (is_opal_context(*ksp, *nip)) {
+			fprintf(fp, "%0lx: Task is running in OPAL (firmware) context\n",
+				bt_in->task);
+			out_of_context = TRUE;
 		} else
 			fprintf(fp, "%0lx: Invalid Stack Pointer %0lx\n",
 				bt_in->task, *ksp);
-		*nip = pt_regs->nip;
 	}
 
 	if (bt_in->flags &&
@@ -2291,7 +2355,8 @@ ppc64_vmcore_stack_frame(struct bt_info *bt_in, ulong *nip, ulong *ksp)
 	 * Print the collected regs for the active task
 	 */
 	ppc64_print_regs(pt_regs);
-	if (in_user_space)
+
+	if (out_of_context)
 		return TRUE;
 	if (!IS_KVADDR(*ksp))
 		return FALSE;
@@ -2825,7 +2890,6 @@ ppc64_get_smp_cpus(void)
  */
 #define SKIBOOT_CONSOLE_DUMP_START	0x31000000
 #define SKIBOOT_CONSOLE_DUMP_SIZE	0x100000
-#define SKIBOOT_BASE			0x30000000
 #define ASCII_UNLIMITED ((ulong)(-1) >> 1)
 
 void
@@ -2838,10 +2902,6 @@ opalmsg(void)
 		uint64_t u64;
 		uint64_t limit64;
 	};
-	struct opal {
-		unsigned long long base;
-		unsigned long long entry;
-	} opal;
 	int i, a;
 	size_t typesz;
 	void *location;
@@ -2853,24 +2913,12 @@ opalmsg(void)
 	long count = SKIBOOT_CONSOLE_DUMP_SIZE;
 	ulonglong addr = SKIBOOT_CONSOLE_DUMP_START;
 
+	if (!(machdep->flags & OPAL_FW))
+		error(FATAL, "dump was not captured on OPAL based system");
+
 	if (CRASHDEBUG(4))
 		fprintf(fp, "<addr: %llx count: %ld (%s)>\n",
 				addr, count, "PHYSADDR");
-
-	/*
-	 * OPAL based platform check
-	 * struct opal of BSS section and hence default value will be ZERO(0)
-	 * opal_init() in the kernel initializes this structure based on
-	 * the platform. Use it as a key to determine whether the dump
-	 * was taken on an OPAL based system or not.
-	 */
-	if (symbol_exists("opal")) {
-		get_symbol_data("opal", sizeof(struct opal), &opal);
-		if (opal.base != SKIBOOT_BASE)
-			error(FATAL, "dump was captured on non-PowerNV machine");
-	} else {
-		error(FATAL, "dump was captured on non-PowerNV machine");
-	}
 
 	BZERO(&mem, sizeof(struct memloc));
 	lost = typesz = per_line = 0;

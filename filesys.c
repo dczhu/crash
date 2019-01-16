@@ -142,6 +142,9 @@ fd_init(void)
 
 	memory_source_init();
 
+	if (ACTIVE())
+		proc_kcore_init(fp, UNUSED);
+
 	if (CRASHDEBUG(1)) {
 		fprintf(fp, "readmem: %s() ", readmem_function_name());
 		if (ACTIVE()) {
@@ -196,7 +199,7 @@ memory_source_init(void)
 			if ((pc->mfd = open("/proc/kcore", O_RDONLY)) < 0)
 				error(FATAL, "/proc/kcore: %s\n", 
 					strerror(errno));
-			if (!proc_kcore_init(fp))
+			if (!proc_kcore_init(fp, pc->mfd))
 				error(FATAL, 
 				    "/proc/kcore: initialization failed\n");
 		} else {
@@ -2182,8 +2185,8 @@ static void
 dump_inode_page_cache_info(ulong inode)
 {
 	char *inode_buf;
-	ulong i_mapping, nrpages, root_rnode, count;
-	struct radix_tree_pair rtp;
+	ulong i_mapping, nrpages, root_rnode, xarray, count;
+	struct list_pair lp;
 	char header[BUFSIZE];
 	char buf1[BUFSIZE];
 	char buf2[BUFSIZE];
@@ -2212,14 +2215,24 @@ dump_inode_page_cache_info(ulong inode)
 	if (!nrpages)
 		return;
 
-	root_rnode = i_mapping + OFFSET(address_space_page_tree);
-	rtp.index = 0;
-	rtp.value = (void *)&dump_inode_page;
+	xarray = root_rnode = count = 0;
+	if (MEMBER_EXISTS("address_space", "i_pages") &&
+	    STREQ(MEMBER_TYPE_NAME("address_space", "i_pages"), "xarray"))
+		xarray = i_mapping + OFFSET(address_space_page_tree);
+	else 
+		root_rnode = i_mapping + OFFSET(address_space_page_tree);
 
-	count = do_radix_tree(root_rnode, RADIX_TREE_DUMP_CB, &rtp);
+	lp.index = 0;
+	lp.value = (void *)&dump_inode_page;
+
+	if (root_rnode)
+		count = do_radix_tree(root_rnode, RADIX_TREE_DUMP_CB, &lp);
+	else if (xarray)
+		count = do_xarray(xarray, XARRAY_DUMP_CB, &lp);
 
 	if (count != nrpages)
-		error(INFO, "page_tree count: %ld  nrpages: %ld\n",
+		error(INFO, "%s page count: %ld  nrpages: %ld\n",
+			root_rnode ? "radix tree" : "xarray",
 			count, nrpages);
 
 	return;
@@ -3994,7 +4007,7 @@ static void do_radix_tree_search(ulong node, ulong slot, const char *path,
 				 ulong index, void *private)
 {
 	struct do_radix_tree_info *info = private;
-	struct radix_tree_pair *rtp = info->data;
+	struct list_pair *rtp = info->data;
 
 	if (rtp->index == index) {
 		rtp->value = (void *)slot;
@@ -4012,7 +4025,7 @@ static void do_radix_tree_gather(ulong node, ulong slot, const char *path,
 				 ulong index, void *private)
 {
 	struct do_radix_tree_info *info = private;
-	struct radix_tree_pair *rtp = info->data;
+	struct list_pair *rtp = info->data;
 
 	if (info->maxcount) {
 		rtp[info->count].index = index;
@@ -4026,7 +4039,7 @@ static void do_radix_tree_dump_cb(ulong node, ulong slot, const char *path,
 				  ulong index, void *private)
 {
 	struct do_radix_tree_info *info = private;
-	struct radix_tree_pair *rtp = info->data;
+	struct list_pair *rtp = info->data;
 	int (*cb)(ulong) = rtp->value;
 
 	/* Caller defined operation */
@@ -4054,7 +4067,7 @@ static void do_radix_tree_dump_cb(ulong node, ulong slot, const char *path,
  *            return a count of 0. 
  *          RADIX_TREE_DUMP - Dump all existing index/value pairs.    
  *          RADIX_TREE_GATHER - Store all existing index/value pairs in the 
- *            passed-in array of radix_tree_pair structs starting at rtp, 
+ *            passed-in array of list_pair structs starting at rtp, 
  *            returning the count of entries stored; the caller can/should 
  *            limit the number of returned entries by putting the array size
  *            (max count) in the rtp->index field of the first structure 
@@ -4064,8 +4077,8 @@ static void do_radix_tree_dump_cb(ulong node, ulong slot, const char *path,
  *            be invoked.
  *
  *     rtp: Unused by RADIX_TREE_COUNT and RADIX_TREE_DUMP. 
- *          A pointer to a radix_tree_pair structure for RADIX_TREE_SEARCH.
- *          A pointer to an array of radix_tree_pair structures for
+ *          A pointer to a list_pair structure for RADIX_TREE_SEARCH.
+ *          A pointer to an array of list_pair structures for
  *          RADIX_TREE_GATHER; the dimension (max count) of the array may
  *          be stored in the index field of the first structure to avoid
  *          any chance of an overrun.
@@ -4073,7 +4086,7 @@ static void do_radix_tree_dump_cb(ulong node, ulong slot, const char *path,
  *          callback function.  The callback prototype must be: int (*)(ulong);
  */
 ulong
-do_radix_tree(ulong root, int flag, struct radix_tree_pair *rtp)
+do_radix_tree(ulong root, int flag, struct list_pair *rtp)
 {
 	struct do_radix_tree_info info = {
 		.count		= 0,
@@ -4123,6 +4136,149 @@ do_radix_tree(ulong root, int flag, struct radix_tree_pair *rtp)
 	}
 
 	do_radix_tree_traverse(root, 1, &ops);
+	return info.count;
+}
+
+
+struct do_xarray_info {
+	ulong maxcount;
+	ulong count;
+	void *data;
+};
+static void do_xarray_count(ulong node, ulong slot, const char *path,
+				ulong index, void *private)
+{
+	struct do_xarray_info *info = private;
+	info->count++;
+}
+static void do_xarray_search(ulong node, ulong slot, const char *path,
+				 ulong index, void *private)
+{
+	struct do_xarray_info *info = private;
+	struct list_pair *xp = info->data;
+
+	if (xp->index == index) {
+		xp->value = (void *)slot;
+		info->count = 1;
+	}
+}
+static void do_xarray_dump(ulong node, ulong slot, const char *path,
+			       ulong index, void *private)
+{
+	struct do_xarray_info *info = private;
+	fprintf(fp, "[%ld] %lx\n", index, slot);
+	info->count++;
+}
+static void do_xarray_gather(ulong node, ulong slot, const char *path,
+				 ulong index, void *private)
+{
+	struct do_xarray_info *info = private;
+	struct list_pair *xp = info->data;
+
+	if (info->maxcount) {
+		xp[info->count].index = index;
+		xp[info->count].value = (void *)slot;
+
+		info->count++;
+		info->maxcount--;
+	}
+}
+static void do_xarray_dump_cb(ulong node, ulong slot, const char *path,
+				  ulong index, void *private)
+{
+	struct do_xarray_info *info = private;
+	struct list_pair *xp = info->data;
+	int (*cb)(ulong) = xp->value;
+
+	/* Caller defined operation */
+	if (!cb(slot)) {
+		if (slot & XARRAY_TAG_MASK) {
+			if (CRASHDEBUG(0))
+				error(INFO, "entry has XARRAY_TAG_MASK bits set: %lx\n", slot); 
+			return;
+		}
+		error(FATAL, "do_xarray: callback "
+		      "operation failed: entry: %ld  item: %lx\n",
+		      info->count, slot);
+	}
+	info->count++;
+}
+
+/*
+ *  do_xarray argument usage: 
+ *
+ *    root: Address of a xarray structure
+ *
+ *    flag: XARRAY_COUNT - Return the number of entries in the tree.   
+ *          XARRAY_SEARCH - Search for an entry at xp->index; if found,
+ *            store the entry in xp->value and return a count of 1; otherwise
+ *            return a count of 0. 
+ *          XARRY_DUMP - Dump all existing index/value pairs.    
+ *          XARRAY_GATHER - Store all existing index/value pairs in the 
+ *            passed-in array of list_pair structs starting at xp, 
+ *            returning the count of entries stored; the caller can/should 
+ *            limit the number of returned entries by putting the array size
+ *            (max count) in the xp->index field of the first structure 
+ *            in the passed-in array.
+ *          XARRAY_DUMP_CB - Similar with XARRAY_DUMP, but for each
+ *            xarray entry, a user defined callback at xp->value will
+ *            be invoked.
+ *
+ *      xp: Unused by XARRAY_COUNT and XARRAY_DUMP. 
+ *          A pointer to a list_pair structure for XARRAY_SEARCH.
+ *          A pointer to an array of list_pair structures for
+ *          XARRAY_GATHER; the dimension (max count) of the array may
+ *          be stored in the index field of the first structure to avoid
+ *          any chance of an overrun.
+ *          For XARRAY_DUMP_CB, the rtp->value must be initialized as a
+ *          callback function.  The callback prototype must be: int (*)(ulong);
+ */
+ulong
+do_xarray(ulong root, int flag, struct list_pair *xp)
+{
+	struct do_xarray_info info = {
+		.count		= 0,
+		.data		= xp,
+	};
+	struct xarray_ops ops = {
+		.radix		= 16,
+		.private	= &info,
+	};
+
+	switch (flag)
+	{
+	case XARRAY_COUNT:
+		ops.entry = do_xarray_count;
+		break;
+
+	case XARRAY_SEARCH:
+		ops.entry = do_xarray_search;
+		break;
+
+	case XARRAY_DUMP:
+		ops.entry = do_xarray_dump;
+		break;
+
+	case XARRAY_GATHER:
+		if (!(info.maxcount = xp->index))
+			info.maxcount = (ulong)(-1);   /* caller beware */
+
+		ops.entry = do_xarray_gather;
+		break;
+
+	case XARRAY_DUMP_CB:
+		if (xp->value == NULL) {
+			error(FATAL, "do_xarray: no callback function specified");
+			return -EINVAL;
+		}
+		ops.entry = do_xarray_dump_cb;
+		break;
+
+	default:
+		error(FATAL, "do_xarray: invalid flag: %lx\n", flag);
+	}
+
+	do_xarray_traverse(root, 1, &ops);
 	return info.count;
 }
 

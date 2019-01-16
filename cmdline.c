@@ -1,8 +1,8 @@
 /* cmdline.c - core analysis suite
  *
  * Copyright (C) 1999, 2000, 2001, 2002 Mission Critical Linux, Inc.
- * Copyright (C) 2002-2015,2018 David Anderson
- * Copyright (C) 2002-2015,2018 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2002-2015,2019 David Anderson
+ * Copyright (C) 2002-2015,2019 Red Hat, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -40,6 +40,8 @@ int shell_command(char *);
 static void modify_orig_line(char *, struct args_input_file *);
 static void modify_expression_arg(char *, char **, struct args_input_file *);
 static int verify_args_input_file(char *);
+static char *crash_readline_completion_generator(const char *, int);
+static char **crash_readline_completer(const char *, int, int);
 
 #define READLINE_LIBRARY
 
@@ -119,9 +121,11 @@ process_command_line(void)
 			args[0] = NULL;
 			fprintf(fp, "\n");
 			return;
-		} 
-
-		strcpy(pc->command_line, pc->readline);
+		}
+		if (strlen(pc->readline) >= BUFSIZE)
+			error(FATAL, "input line exceeds maximum of 1500 bytes\n");	
+		else	
+			strcpy(pc->command_line, pc->readline);
 		free(pc->readline); 
 
 		clean_line(pc->command_line);
@@ -806,7 +810,7 @@ output_command_to_pids(void)
         char buf1[BUFSIZE];
         char buf2[BUFSIZE];
         char lookfor[BUFSIZE+2];
-        char *pid, *name, *status, *p_pid, *pgrp;
+        char *pid, *name, *status, *p_pid, *pgrp, *comm;
 	char *arglist[MAXARGS];
 	int argc;
 	FILE *pipe;
@@ -815,7 +819,8 @@ output_command_to_pids(void)
 	retries = 0;
 	shell_has_exited = FALSE;
 	pc->pipe_pid = pc->pipe_shell_pid = 0;
-        sprintf(lookfor, "(%s)", pc->pipe_command);
+	comm = strrchr(pc->pipe_command, '/');
+	sprintf(lookfor, "(%s)", comm ? ++comm : pc->pipe_command);
 	stall(1000);
 retry:
         if (is_directory("/proc") && (dirp = opendir("/proc"))) {
@@ -1318,8 +1323,10 @@ is_shell_script(char *s)
         if ((fd = open(s, O_RDONLY)) < 0) 
                 return FALSE;
         
-        if (isatty(fd)) 
+        if (isatty(fd)) {
+                close(fd);
                 return FALSE;
+	}
         
         if (read(fd, interp, 2) != 2) {
                 close(fd);
@@ -2071,6 +2078,9 @@ readline_init(void)
 	if (STREQ(pc->editing_mode, "emacs")) {
         	rl_editing_mode = emacs_mode;
 	}
+
+	rl_attempted_completion_function = crash_readline_completer;
+	rl_attempted_completion_over = 1;
 }
 
 /*
@@ -2608,3 +2618,27 @@ exec_args_input_file(struct command_table_entry *ct, struct args_input_file *aif
 	fclose(pc->args_ifile);
 	pc->args_ifile = NULL;
 }
+
+static char *
+crash_readline_completion_generator(const char *match, int state)
+{
+	static struct syment *sp_match;
+
+	if (state == 0)
+		sp_match = NULL;
+
+	sp_match = symbol_complete_match(match, sp_match);
+
+	if (sp_match)
+		return(strdup(sp_match->name));
+	else
+		return NULL;
+}
+
+static char **
+crash_readline_completer(const char *match, int start, int end)
+{
+	rl_attempted_completion_over = 1;
+	return rl_completion_matches(match, crash_readline_completion_generator);
+}
+

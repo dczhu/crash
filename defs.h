@@ -646,7 +646,6 @@ struct new_utsname {
 #define ARCH_PVOPS          (0x10000000)
 #define PRE_KERNEL_INIT     (0x20000000)
 #define ARCH_PVOPS_XEN      (0x40000000)
-#define IRQ_DESC_TREE       (0x80000000)
 
 #define GCC_VERSION_DEPRECATED (GCC_3_2|GCC_3_2_3|GCC_2_96|GCC_3_3_2|GCC_3_3_3)
 
@@ -657,6 +656,8 @@ struct new_utsname {
 #define GET_TIMESTAMP               (0x8ULL)
 #define TVEC_BASES_V3              (0x10ULL)
 #define TIMER_BASES                (0x20ULL)
+#define IRQ_DESC_TREE_RADIX        (0x40ULL)
+#define IRQ_DESC_TREE_XARRAY       (0x80ULL)
 
 #define XEN()       (kt->flags & ARCH_XEN)
 #define OPENVZ()    (kt->flags & ARCH_OPENVZ)
@@ -861,6 +862,7 @@ struct task_table {                      /* kernel/local task table data */
 	ulong pid_radix_tree;
 	int callbacks;
 	struct task_context **context_by_task; /* task_context sorted by task addr */
+	ulong pid_xarray;
 };
 
 #define TASK_INIT_DONE       (0x1)
@@ -882,6 +884,7 @@ struct task_table {                      /* kernel/local task table data */
 #define THREAD_INFO_IN_TASK (0x10000)
 #define PID_RADIX_TREE   (0x20000)
 #define INDEXED_CONTEXTS (0x40000)
+#define PID_XARRAY       (0x80000)
 
 #define TASK_SLUSH (20)
 
@@ -2046,6 +2049,31 @@ struct offset_table {                    /* stash of commonly-used offsets */
 	long memcg_cache_params_children_node;
 	long task_struct_pid_links;
 	long kernel_symbol_value;
+	long pci_dev_dev;
+        long pci_dev_hdr_type;
+        long pci_dev_pcie_flags_reg;
+        long pci_bus_node;
+        long pci_bus_devices;
+        long pci_bus_dev;
+        long pci_bus_children;
+        long pci_bus_parent;
+        long pci_bus_self;
+	long device_kobj;
+	long kobject_name;
+	long memory_block_dev;
+	long memory_block_start_section_nr;
+	long memory_block_end_section_nr;
+	long memory_block_state;
+	long memory_block_nid;
+	long mem_section_pageblock_flags;
+	long bus_type_p;
+	long device_private_device;
+	long device_private_knode_bus;
+	long xarray_xa_head;
+	long xa_node_slots;
+	long xa_node_shift;
+	long hd_struct_dkstats;
+	long disk_stats_in_flight;
 };
 
 struct size_table {         /* stash of commonly-used sizes */
@@ -2201,6 +2229,8 @@ struct size_table {         /* stash of commonly-used sizes */
 	long bpf_prog_aux;
 	long bpf_map;
 	long bpf_insn;
+	long xarray;
+	long xa_node;
 };
 
 struct array_table {
@@ -2247,6 +2277,7 @@ struct array_table {
 #define ANON_MEMBER_OFFSET_REQUEST ((struct datatype_member *)(-2))
 #define MEMBER_TYPE_REQUEST ((struct datatype_member *)(-3))
 #define STRUCT_SIZE_REQUEST ((struct datatype_member *)(-4))
+#define MEMBER_TYPE_NAME_REQUEST ((struct datatype_member *)(-5))
 
 #define STRUCT_SIZE(X)      datatype_info((X), NULL, STRUCT_SIZE_REQUEST)
 #define UNION_SIZE(X)       datatype_info((X), NULL, STRUCT_SIZE_REQUEST)
@@ -2256,6 +2287,7 @@ struct array_table {
 #define MEMBER_EXISTS(X,Y)  (datatype_info((X), (Y), NULL) >= 0)
 #define MEMBER_SIZE(X,Y)    datatype_info((X), (Y), MEMBER_SIZE_REQUEST)
 #define MEMBER_TYPE(X,Y)    datatype_info((X), (Y), MEMBER_TYPE_REQUEST)
+#define MEMBER_TYPE_NAME(X,Y)    ((char *)datatype_info((X), (Y), MEMBER_TYPE_NAME_REQUEST))
 #define ANON_MEMBER_OFFSET(X,Y)    datatype_info((X), (Y), ANON_MEMBER_OFFSET_REQUEST)
 
 /*
@@ -4092,6 +4124,8 @@ struct efi_memory_desc_t {
 #define _SECTION_SIZE_BITS	24
 #define _MAX_PHYSMEM_BITS	44
 #define _MAX_PHYSMEM_BITS_3_7   46
+#define _MAX_PHYSMEM_BITS_4_19  47
+#define _MAX_PHYSMEM_BITS_4_20  51
 
 #endif /* PPC64 */
 
@@ -4588,6 +4622,11 @@ struct gnu_request {
     		struct objfile *obj;
   	} global_iterator;
 	struct load_module *lm;
+	char *member_main_type_name;
+	char *member_main_type_tag_name;
+	char *member_target_type_name;
+	char *member_target_type_tag_name;
+	char *type_tag_name;
 };
 
 /*
@@ -4995,8 +5034,16 @@ struct radix_tree_ops {
 	void *private;
 };
 int do_radix_tree_traverse(ulong ptr, int is_root, struct radix_tree_ops *ops);
+struct xarray_ops {
+	void (*entry)(ulong node, ulong slot, const char *path,
+		      ulong index, void *private);
+	uint radix;
+	void *private;
+};
+int do_xarray_traverse(ulong ptr, int is_root, struct xarray_ops *ops);
 int do_rdtree(struct tree_data *);
 int do_rbtree(struct tree_data *);
+int do_xatree(struct tree_data *);
 int retrieve_list(ulong *, int);
 long power(long, int);
 long long ll_power(long long, long long);
@@ -5181,6 +5228,7 @@ void parse_for_member_extended(struct datatype_member *, ulong);
 void add_to_downsized(char *);
 int is_downsized(char *);
 int is_string(char *, char *);
+struct syment *symbol_complete_match(const char *, struct syment *);
 
 /*  
  *  memory.c 
@@ -5276,21 +5324,31 @@ char *fill_inode_cache(ulong);
 void clear_inode_cache(void);
 int monitor_memory(long *, long *, long *, long *);
 int is_readable(char *);
+struct list_pair {
+	ulong index;
+	void *value;
+};
+#define radix_tree_pair list_pair
+ulong do_radix_tree(ulong, int, struct list_pair *);
 #define RADIX_TREE_COUNT   (1)
 #define RADIX_TREE_SEARCH  (2)
 #define RADIX_TREE_DUMP    (3)
 #define RADIX_TREE_GATHER  (4)
 #define RADIX_TREE_DUMP_CB (5)
-struct radix_tree_pair {
-	ulong index;
-	void *value;
-};
-ulong do_radix_tree(ulong, int, struct radix_tree_pair *);
 /*
  * from: "include/linux/radix-tree.h"
  */
 #define RADIX_TREE_ENTRY_MASK           3UL
 #define RADIX_TREE_EXCEPTIONAL_ENTRY    2
+
+ulong do_xarray(ulong, int, struct list_pair *);
+#define XARRAY_COUNT   (1)
+#define XARRAY_SEARCH  (2)
+#define XARRAY_DUMP    (3)
+#define XARRAY_GATHER  (4)
+#define XARRAY_DUMP_CB (5)
+#define XARRAY_TAG_MASK      (3UL)
+#define XARRAY_TAG_INTERNAL  (2UL)
 
 int file_dump(ulong, ulong, ulong, int, int);
 #define DUMP_FULL_NAME      0x1
@@ -5985,6 +6043,12 @@ struct ppc64_elf_prstatus {
 
 #ifdef PPC64
 
+struct ppc64_opal {
+	uint64_t base;
+	uint64_t entry;
+	uint64_t size;
+};
+
 struct ppc64_vmemmap {
         unsigned long phys;
         unsigned long virt;
@@ -6035,6 +6099,7 @@ struct machine_specific {
 	ulong _page_accessed;
 	int (*is_kvaddr)(ulong);
 	int (*is_vmaddr)(ulong);
+	struct ppc64_opal opal;
 };
 
 void ppc64_init(int);
@@ -6052,6 +6117,7 @@ void ppc64_dump_machdep_table(ulong);
  * in the kernel is also 0x40.
  */
 #define RADIX_MMU       (0x40)
+#define OPAL_FW         (0x80)
 
 #define REGION_SHIFT       (60UL)
 #define REGION_ID(addr)    (((unsigned long)(addr)) >> REGION_SHIFT)
@@ -6335,7 +6401,7 @@ int kdump_phys_base(ulong *);
 int kdump_set_phys_base(ulong);
 int arm_kdump_phys_base(ulong *);
 int is_proc_kcore(char *, ulong);
-int proc_kcore_init(FILE *);
+int proc_kcore_init(FILE *, int);
 int read_proc_kcore(int, void *, int, ulong, physaddr_t);
 int write_proc_kcore(int, void *, int, ulong, physaddr_t);
 int kcore_memory_dump(FILE *);

@@ -394,8 +394,12 @@ x86_64_init(int when)
 				readmem(symbol_value("vmalloc_base"), KVADDR,
 					&machdep->machspec->vmalloc_start_addr,
 					sizeof(ulong), "vmalloc_base", FAULT_ON_ERROR);
-				machdep->machspec->vmalloc_end =
-					machdep->machspec->vmalloc_start_addr + TERABYTES(32) - 1;
+				if (machdep->flags & VM_5LEVEL)
+					machdep->machspec->vmalloc_end =
+						machdep->machspec->vmalloc_start_addr + TERABYTES(1280) - 1;
+				else
+					machdep->machspec->vmalloc_end =
+						machdep->machspec->vmalloc_start_addr + TERABYTES(32) - 1;
 				if (kernel_symbol_exists("vmemmap_base")) {
 					readmem(symbol_value("vmemmap_base"), KVADDR,
 						&machdep->machspec->vmemmap_vaddr, sizeof(ulong),
@@ -1645,7 +1649,8 @@ x86_64_IS_VMALLOC_ADDR(ulong vaddr)
 		(vaddr >= VSYSCALL_START && vaddr < VSYSCALL_END) ||
 		(machdep->machspec->cpu_entry_area_start && 
 		 vaddr >= machdep->machspec->cpu_entry_area_start &&
-		 vaddr <= machdep->machspec->cpu_entry_area_end));
+		 vaddr <= machdep->machspec->cpu_entry_area_end) ||
+		((machdep->flags & VM_5LEVEL) && vaddr > VMALLOC_END && vaddr < VMEMMAP_VADDR));
 }
 
 static int 
@@ -3273,6 +3278,18 @@ x86_64_in_alternate_stack(int cpu, ulong rsp)
 	return FALSE;
 }
 
+static char *
+x86_64_exception_RIP_message(struct bt_info *bt, ulong rip)
+{
+	physaddr_t phys;
+	
+	if (IS_VMALLOC_ADDR(rip) && 
+	    machdep->kvtop(bt->tc, rip, &phys, 0))
+		return ("no symbolic reference");
+ 
+	return ("unknown or invalid address");
+}
+
 #define STACK_TRANSITION_ERRMSG_E_I_P \
 "cannot transition from exception stack to IRQ stack to current process stack:\n    exception stack pointer: %lx\n          IRQ stack pointer: %lx\n      process stack pointer: %lx\n         current stack base: %lx\n" 
 #define STACK_TRANSITION_ERRMSG_E_P \
@@ -3384,7 +3401,7 @@ x86_64_low_budget_back_trace_cmd(struct bt_info *bt_in)
 				fprintf(ofp, (*gdb_output_radix == 16) ?
 					"+0x%lx" : "+%ld", offset);
 		} else
-			fprintf(ofp, "unknown or invalid address");
+			fprintf(ofp, "%s", x86_64_exception_RIP_message(bt, bt->instptr));
 		fprintf(ofp, "]\n");
 		if (KVMDUMP_DUMPFILE())
 			kvmdump_display_regs(bt->tc->processor, ofp);
@@ -4472,9 +4489,9 @@ x86_64_exception_frame(ulong flags, ulong kvaddr, char *local,
 						    (*gdb_output_radix == 16) ? 
 						    "+0x%lx" : "+%ld", 
 						    offset);
-				} else 
-					fprintf(ofp, 
-						"unknown or invalid address");
+				} else
+					fprintf(ofp, "%s", 
+						x86_64_exception_RIP_message(bt, rip));
 				fprintf(ofp, "]\n");
 			}
 		} else if (!(cs & 3)) {
@@ -4486,7 +4503,7 @@ x86_64_exception_frame(ulong flags, ulong kvaddr, char *local,
 						"+0x%lx" : "+%ld", offset);
 				bt->eframe_ip = rip;
 			} else
-                		fprintf(ofp, "unknown or invalid address");
+				fprintf(ofp, "%s", x86_64_exception_RIP_message(bt, rip));
 			fprintf(ofp, "]\n");
 		}
 		fprintf(ofp, "    RIP: %016lx  RSP: %016lx  RFLAGS: %08lx\n", 
@@ -4630,6 +4647,7 @@ x86_64_eframe_verify(struct bt_info *bt, long kvaddr, long cs, long ss,
 	int estack;
 	struct syment *sp;
 	ulong offset, exception;
+	physaddr_t phys;
 
 	if ((rflags & RAZ_MASK) || !(rflags & 0x2))
 		return FALSE;
@@ -4693,6 +4711,12 @@ x86_64_eframe_verify(struct bt_info *bt, long kvaddr, long cs, long ss,
 	if ((cs == 0x10) && kvaddr) {
                 if (is_kernel_text(rip) && IS_KVADDR(rsp) &&
 		    x86_64_in_exception_stack(bt, NULL))
+			return TRUE;
+	}
+
+	if ((cs == 0x10) && kvaddr) {
+                if (IS_KVADDR(rsp) && IS_VMALLOC_ADDR(rip) && 
+		    machdep->kvtop(bt->tc, rip, &phys, 0))
 			return TRUE;
 	}
 
@@ -6679,6 +6703,21 @@ x86_64_calc_phys_base(void)
 		}
 	}
 
+	/*
+	 * Linux 4.10 exports it in VMCOREINFO (finally).
+	 */
+	if ((p1 = pc->read_vmcoreinfo("NUMBER(phys_base)"))) {
+		if (*p1 == '-')
+			machdep->machspec->phys_base = dtol(p1+1, QUIET, NULL) * -1;
+		else
+			machdep->machspec->phys_base = dtol(p1, QUIET, NULL);
+		if (CRASHDEBUG(1))
+			fprintf(fp, "VMCOREINFO: NUMBER(phys_base): %s -> %lx\n", 
+				p1, machdep->machspec->phys_base);
+		free(p1);
+		return;
+	}
+
 	if (LOCAL_ACTIVE()) {
 	        if ((iomem = fopen("/proc/iomem", "r")) == NULL)
 	                return;
@@ -6716,21 +6755,6 @@ x86_64_calc_phys_base(void)
 				machdep->machspec->phys_base);
 		}
 
-		return;
-	}
-
-	/*
-	 * Linux 4.10 exports it in VMCOREINFO (finally).
-	 */
-	if ((p1 = pc->read_vmcoreinfo("NUMBER(phys_base)"))) {
-		if (*p1 == '-')
-			machdep->machspec->phys_base = dtol(p1+1, QUIET, NULL) * -1;
-		else
-			machdep->machspec->phys_base = dtol(p1, QUIET, NULL);
-		if (CRASHDEBUG(1))
-			fprintf(fp, "VMCOREINFO: NUMBER(phys_base): %s -> %lx\n", 
-				p1, machdep->machspec->phys_base);
-		free(p1);
 		return;
 	}
 
