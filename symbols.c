@@ -8662,6 +8662,8 @@ dump_offset_table(char *spec, ulong makestruct)
                 OFFSET(task_rss_stat_count));
         fprintf(fp, "              task_struct_pids: %ld\n",
                 OFFSET(task_struct_pids));
+        fprintf(fp, "        task_struct_thread_pid: %ld\n",
+                OFFSET(task_struct_thread_pid));
         fprintf(fp, "         task_struct_pid_links: %ld\n",
                 OFFSET(task_struct_pid_links));
         fprintf(fp, "          task_struct_last_run: %ld\n",
@@ -8757,6 +8759,8 @@ dump_offset_table(char *spec, ulong makestruct)
         	OFFSET(signal_struct_action));
 	fprintf(fp, "  signal_struct_shared_pending: %ld\n",
         	OFFSET(signal_struct_shared_pending));
+	fprintf(fp, "            signal_struct_pids: %ld\n",
+        	OFFSET(signal_struct_pids));
 	fprintf(fp, "            signal_struct_rlim: %ld\n",
         	OFFSET(signal_struct_rlim));
 

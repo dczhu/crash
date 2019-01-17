@@ -233,10 +233,32 @@ __task_pid_nr_ns(ulong task, enum pid_type type)
 				"__task_pid_nr_ns: group_leader",
 				gcore_verbose_error_handle());
 
-		readmem(task + OFFSET(task_struct_pids) + type * SIZE(pid_link)
-			+ OFFSET(pid_link_pid), KVADDR, &pids_type_pid,
-			sizeof(pids_type_pid),
-			"__task_pid_nr_ns: pids_type_pid", gcore_verbose_error_handle());
+		if (VALID_MEMBER(task_struct_pids))
+			readmem(task + OFFSET(task_struct_pids) + type * SIZE(pid_link)
+				+ OFFSET(pid_link_pid), KVADDR, &pids_type_pid,
+				sizeof(pids_type_pid),
+				"__task_pid_nr_ns: pids_type_pid", gcore_verbose_error_handle());
+		else {
+			if (type != PIDTYPE_PID) {
+				ulong psignal;
+				readmem(task + OFFSET(task_struct_signal),
+					KVADDR, &psignal, sizeof(psignal),
+					"__task_pid_nr_ns: psignal",
+					gcore_verbose_error_handle());
+				readmem(psignal + OFFSET(signal_struct_pids)
+					+ type * sizeof(ulong),
+					KVADDR, &pids_type_pid,
+					sizeof(pids_type_pid),
+					"__task_pid_nr_ns: pids_type_pid (not PIDTYPE_PID)",
+					gcore_verbose_error_handle());
+			} else {
+				readmem(task + OFFSET(task_struct_thread_pid),
+					KVADDR, &pids_type_pid,
+					sizeof(pids_type_pid),
+					"__task_pid_nr_ns: pids_type_pid (PIDTYPE_PID)",
+					gcore_verbose_error_handle());
+			}
+		}
 
 		nr = pid_nr_ns(pids_type_pid, ns);
         }
@@ -420,9 +442,13 @@ pid_alive(ulong task)
 {
 	pid_t pid;
 
-	readmem(task + OFFSET(task_struct_pids) + PIDTYPE_PID * SIZE(pid_link)
-		+ OFFSET(pid_link_pid), KVADDR, &pid, sizeof(pid), "pid_alive",
-		gcore_verbose_error_handle());
+	if (VALID_MEMBER(task_struct_pids))
+		readmem(task + OFFSET(task_struct_pids) + PIDTYPE_PID * SIZE(pid_link)
+			+ OFFSET(pid_link_pid), KVADDR, &pid, sizeof(pid), "pid_alive",
+			gcore_verbose_error_handle());
+	else
+		readmem(task + OFFSET(task_struct_thread_pid), KVADDR, &pid,
+			sizeof(pid), "pid_alive", gcore_verbose_error_handle());
 
         return !!pid;
 }

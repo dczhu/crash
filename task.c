@@ -315,6 +315,7 @@ task_init(void)
 	        strcpy(buf, "alias last ps -l");
         	alias_init(buf);
 	}
+	MEMBER_OFFSET_INIT(task_struct_thread_pid, "task_struct", "thread_pid");
 	MEMBER_OFFSET_INIT(task_struct_pid_links, "task_struct", "pid_links");
 	MEMBER_OFFSET_INIT(pid_link_pid, "pid_link", "pid");
 	MEMBER_OFFSET_INIT(pid_hash_chain, "pid", "hash_chain");
@@ -360,6 +361,7 @@ task_init(void)
 	MEMBER_OFFSET_INIT(signal_struct_action, "signal_struct", "action");
 	MEMBER_OFFSET_INIT(signal_struct_shared_pending, "signal_struct",
 		"shared_pending");
+	MEMBER_OFFSET_INIT(signal_struct_pids, "signal_struct", "pids");
 
 	MEMBER_OFFSET_INIT(k_sigaction_sa, "k_sigaction", "sa");
 	

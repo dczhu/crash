@@ -719,6 +719,7 @@ extern struct gcore_machdep_table *gcore_machdep;
 enum pid_type
 {
         PIDTYPE_PID,
+        PIDTYPE_TGID,
         PIDTYPE_PGID,
         PIDTYPE_SID,
         PIDTYPE_MAX
