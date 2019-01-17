@@ -3288,7 +3288,9 @@ struct arm64_stackframe {
 #endif
 
 #define PTOV(X)		((unsigned long)(X) + KVSTART)
-#define VTOP(X)		((unsigned long)(X) & 0x00000000fffffffflu)
+#define VTOP(X)		((unsigned long)(X) > 0xffffffff80000000lu ? \
+			((unsigned long)(X) & 0x1ffffffflu) : \
+			((unsigned long)(X) & 0x7fffffffffffffflu))
 #endif
 
 #define IS_VMALLOC_ADDR(X)	(vt->vmalloc_start && \
