@@ -3271,27 +3271,17 @@ struct arm64_stackframe {
 
 #define PAGEBASE(X)		(((ulong)(X)) & (ulong)machdep->pagemask)
 
-/*
- * Physical address start -- It does not necessarily start from 0. Some
- * platforms, for example, have 0x20000000 as the 1st physical address.
- */
-#define PHYS_START		0
 #ifdef MIPS
-#define PTOV(X)		((unsigned long)(X) + 0x80000000lu - PHYS_START)
-#define VTOP(X)		(((unsigned long)(X) & 0x1ffffffflu) + PHYS_START)
+#define PTOV(X)		((unsigned long)(X) + 0x80000000lu)
+#define VTOP(X)		((unsigned long)(X) & 0x1ffffffflu)
+#else
+#define KVSTART		0xa800000000000000lu
+#define PTOV(X)		((unsigned long)(X) + KVSTART)
+#define VTOP(X)		((unsigned long)(X) & 0x00000000fffffffflu)
+#endif
 
 #define IS_VMALLOC_ADDR(X)	(vt->vmalloc_start && \
 				(ulong)(X) >= vt->vmalloc_start)
-#else
-#define PTOV(X)		((unsigned long)(X) + 0xffffffff80000000lu - PHYS_START)
-#define VTOP(X)		((unsigned long)(X) > 0xffffffff80000000lu ? \
-			((unsigned long)(X) & 0x1ffffffflu) + PHYS_START : \
-			((unsigned long)(X) & 0x7ffffffffffffff) + PHYS_START)
-
-#define IS_VMALLOC_ADDR(X)	(vt->vmalloc_start && \
-				(ulong)(X) >= vt->vmalloc_start && \
-				(ulong)(X) < 0xffffffff80000000)
-#endif
 
 #define DEFAULT_MODULES_VADDR	(machdep->kvbase - 16 * 1024 * 1024)
 #define MODULES_VADDR   	(machdep->machspec->modules_vaddr)
