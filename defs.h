@@ -3277,7 +3277,16 @@ struct arm64_stackframe {
 #define PTOV(X)		((unsigned long)(X) + 0x80000000lu)
 #define VTOP(X)		((unsigned long)(X) & 0x1ffffffflu)
 #else
-#define KVSTART		0xa800000000000000lu
+/*
+ * Intentionally comment out both of the following so that a correct value
+ * will always be defined.
+ */
+/* #define KVSTART 0xa800000000000000 */
+/* #define KVSTART 0xffffffff80000000 */
+#ifndef KVSTART
+#error "You need to define KVSTART (kernel virtual address start)!"
+#endif
+
 #define PTOV(X)		((unsigned long)(X) + KVSTART)
 #define VTOP(X)		((unsigned long)(X) & 0x00000000fffffffflu)
 #endif
