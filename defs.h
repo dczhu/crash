@@ -3276,6 +3276,9 @@ struct arm64_stackframe {
 #ifdef MIPS
 #define PTOV(X)		((unsigned long)(X) + 0x80000000lu)
 #define VTOP(X)		((unsigned long)(X) & 0x1ffffffflu)
+
+#define IS_VMALLOC_ADDR(X)	(vt->vmalloc_start && \
+				(ulong)(X) >= vt->vmalloc_start)
 #else
 /*
  * Intentionally comment out both of the following so that a correct value
@@ -3291,10 +3294,11 @@ struct arm64_stackframe {
 #define VTOP(X)		((unsigned long)(X) > 0xffffffff80000000lu ? \
 			((unsigned long)(X) & 0x1ffffffflu) : \
 			((unsigned long)(X) & 0x7fffffffffffffflu))
-#endif
 
 #define IS_VMALLOC_ADDR(X)	(vt->vmalloc_start && \
-				(ulong)(X) >= vt->vmalloc_start)
+				(ulong)(X) >= vt->vmalloc_start && \
+				(ulong)(X) < 0xffffffff80000000)
+#endif
 
 #define DEFAULT_MODULES_VADDR	(machdep->kvbase - 16 * 1024 * 1024)
 #define MODULES_VADDR   	(machdep->machspec->modules_vaddr)
