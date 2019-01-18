@@ -1043,10 +1043,10 @@ mips_dump_machdep_table(ulong arg)
 	fprintf(fp, "         pageoffset: %lx\n", machdep->pageoffset);
 	fprintf(fp, "        pgdir_shift: %d\n", PGDIR_SHIFT);
 	fprintf(fp, "       ptrs_per_pgd: %lu\n", PTRS_PER_PGD);
-	fprintf(fp, "       ptrs_per_pte: %d\n", PTRS_PER_PTE);
+	fprintf(fp, "       ptrs_per_pte: %ld\n", PTRS_PER_PTE);
 	fprintf(fp, "          stacksize: %ld\n", machdep->stacksize);
 	fprintf(fp, "                 hz: %d\n", machdep->hz);
-	fprintf(fp, "            memsize: %lld (0x%llx)\n",
+	fprintf(fp, "            memsize: %ld (0x%lx)\n",
 		machdep->memsize, machdep->memsize);
 	fprintf(fp, "               bits: %d\n", machdep->bits);
 	fprintf(fp, "            nr_irqs: %d\n", machdep->nr_irqs);
