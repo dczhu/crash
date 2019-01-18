@@ -19,6 +19,7 @@
 #include <elf.h>
 #include "defs.h"
 
+#ifdef MIPS
 /* From arch/mips/asm/include/pgtable{,-32}.h */
 typedef ulong pgd_t;
 typedef ulong pte_t;
@@ -44,6 +45,41 @@ typedef ulong pte_t;
 #define pgd_index(address)	(((address) >> PGDIR_SHIFT) & (PTRS_PER_PGD-1))
 #define pte_offset(address)						\
 	(((address) >> PAGESHIFT()) & (PTRS_PER_PTE - 1))
+#else
+/* From arch/mips/asm/include/pgtable{,-64}.h */
+typedef ulong pgd_t;
+typedef ulong pmd_t;
+typedef ulong pte_t;
+
+/* CONFIG_MIPS_VA_BITS_48 != 1 */
+/* CONFIG_PAGE_SIZE_64KB  != 1 */
+/* So: CONFIG_PGTABLE_LEVELS == 3 */
+#define PGD_ORDER               0
+#define PMD_ORDER		0
+#define PTE_ORDER		0
+
+#define PGD_SIZE	(PAGESIZE() << PGD_ORDER)
+
+#define PMD_SHIFT	(PAGESHIFT() + (PAGESHIFT() + PTE_ORDER - 3))
+#define PMD_SIZE	(1UL << PMD_SHIFT)
+#define PMD_MASK	(~(PMD_SIZE-1))
+
+#define PGDIR_SHIFT	(PMD_SHIFT + (PAGESHIFT() + PMD_ORDER - 3))
+#define PGDIR_SIZE	(1UL << PGDIR_SHIFT)
+#define PGDIR_MASK	(~(PGDIR_SIZE-1))
+
+#define TASK_SIZE64     	0x10000000000UL
+#define USER_PTRS_PER_PGD	((TASK_SIZE64 / PGDIR_SIZE)?(TASK_SIZE64 / PGDIR_SIZE):1)
+
+#define PTRS_PER_PGD	((PAGESIZE() << PGD_ORDER) / sizeof(pgd_t))
+#define PTRS_PER_PMD	((PAGESIZE() << PMD_ORDER) / sizeof(pmd_t))
+#define PTRS_PER_PTE	((PAGESIZE() << PTE_ORDER) / sizeof(pte_t))
+
+#define pgd_index(address)	(((address) >> PGDIR_SHIFT) & (PTRS_PER_PGD-1))
+#define pmd_index(address)	(((address) >> PMD_SHIFT) & (PTRS_PER_PMD-1))
+#define pte_offset(address)	\
+	(((address) >> PAGESHIFT()) & (PTRS_PER_PTE - 1))
+#endif
 
 #define MIPS_CPU_RIXI	0x00800000llu
 
@@ -303,9 +339,30 @@ mips_pgd_vtop(ulong *pgd, ulong vaddr, physaddr_t *paddr, int verbose)
 		return FALSE;
 	}
 
-	page_table = VTOP(pgd_pte) + sizeof(pte_t) * pte_offset(vaddr);
+#ifdef MIPS64
+	ulong pmd_table, pmd_pte;
 
-	FILL_PTBL(PAGEBASE(page_table), PHYSADDR, PAGESIZE());
+	if (PAGESIZE() != 65536) {
+		/* 3 level page tables */
+		pmd_table = VTOP(pgd_pte) + sizeof(pmd_t) * pmd_index(vaddr);
+		FILL_PMD(PAGEBASE(pmd_table), PHYSADDR,
+			(PAGESIZE() << PMD_ORDER));
+		pmd_pte = ULONG(machdep->pmd + PAGEOFFSET(pmd_table));
+
+		if (verbose)
+			fprintf(fp, "  PMD: %08lx => %lx\n",
+				pmd_table, pmd_pte);
+
+		page_table = VTOP(pmd_pte) + sizeof(pte_t) * pte_offset(vaddr);
+	} else {
+		/* 2 level page tables */
+		page_table = VTOP(pgd_pte) + sizeof(pte_t) * pte_offset(vaddr);
+	}
+#else
+	page_table = VTOP(pgd_pte) + sizeof(pte_t) * pte_offset(vaddr);
+#endif
+
+	FILL_PTBL(PAGEBASE(page_table), PHYSADDR, (PAGESIZE() << PTE_ORDER));
 	pte = ULONG(machdep->ptbl + PAGEOFFSET(page_table));
 	if (verbose)
 		fprintf(fp, "  PTE: %08lx => %08lx\n", page_table, pte);
@@ -1147,6 +1204,12 @@ mips_init(int when)
 
 		if ((machdep->pgd = malloc(PGD_SIZE)) == NULL)
 			error(FATAL, "cannot malloc pgd space.");
+#ifdef MIPS64
+		if (PAGESIZE() != 65536) {
+			if ((machdep->pmd = malloc(PAGESIZE())) == NULL)
+				error(FATAL, "cannot malloc pmd space.");
+		}
+#endif
 		if ((machdep->ptbl = malloc(PAGESIZE())) == NULL)
 			error(FATAL, "cannot malloc ptbl space.");
 
