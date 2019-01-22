@@ -3273,6 +3273,16 @@ struct arm64_stackframe {
 
 #define PAGEBASE(X)		(((ulong)(X)) & (ulong)machdep->pagemask)
 
+/*
+ * Intentionally comment out both of the following so that a correct value
+ * will always be defined.
+ */
+/* #define PHYS_START 0x20000000 */
+/* #define PHYS_START 0x40000000 */
+#ifndef PHYS_START
+#error "You need to define PHYS_START (physical address start)!"
+#endif
+
 #ifdef MIPS
 #define PTOV(X)		((unsigned long)(X) + 0x80000000lu)
 #define VTOP(X)		((unsigned long)(X) & 0x1ffffffflu)
