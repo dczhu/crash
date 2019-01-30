@@ -1,0 +1,48 @@
+From 6d4a19f97164f1ccd0152c327f55569214421488 Mon Sep 17 00:00:00 2001
+From: Dengcheng Zhu <dzhu@xxxxxxxxxxxx>
+Date: Wed, 30 Jan 2019 11:32:41 -0800
+Subject: [PATCH] MIPS64: Fix wrong program offset into bfd elfcore note
+ description data
+
+This patch is to be applied to STANDALONE gdb-7.6, as opposed to the
+embedded gdb-7.6 of the crash tool.
+
+The standalone gdb-7.6 works well with process core dump files generated
+by the crash tool extension gcore.
+
+Without this patch, `gdb elf -c core` may throw out the following warning:
+
+warning: core file may not match specified executable file.
+
+This is because bfd/elfcore.h:elf_core_file_matches_executable_p() has:
+
+corename = elf_tdata (core_bfd)->core->program;
+
+where 'program' is set in bfd/elf64-mips.c in case of MIPS64.
+
+Without this patch, the 1st 4 chars of program will be truncated,
+rendering corename (->core->program which can also be found in 'execfn'
+of the output of `file core`) and execname (ELF file name for the
+executable passed to gdb along with the core file) mismatched.
+
+Signed-off-by: Dengcheng Zhu <dzhu@xxxxxxxxxxxx>
+---
+ bfd/elf64-mips.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/bfd/elf64-mips.c b/bfd/elf64-mips.c
+index c24a4ee..0a78511 100644
+--- a/bfd/elf64-mips.c
++++ b/bfd/elf64-mips.c
+@@ -4035,7 +4035,7 @@ elf64_mips_grok_psinfo (bfd *abfd, Elf_Internal_Note *note)
+ 
+       case 136:		/* Linux/MIPS - N64 kernel elf_prpsinfo */
+ 	elf_tdata (abfd)->core->program
+-	 = _bfd_elfcore_strndup (abfd, note->descdata + 40, 16);
++	 = _bfd_elfcore_strndup (abfd, note->descdata + 36, 16);
+ 	elf_tdata (abfd)->core->command
+ 	 = _bfd_elfcore_strndup (abfd, note->descdata + 56, 80);
+     }
+-- 
+2.17.1
+
