@@ -422,10 +422,14 @@ mips_uvtop(struct task_context *tc, ulong vaddr, physaddr_t *paddr, int verbose)
 		mm = task_mm(tc->task, TRUE);
 		if (mm)
 			pgd = ULONG_PTR(tt->mm_struct + OFFSET(mm_struct_pgd));
-		else
+		else {
+			if (!IS_KVADDR(tc->mm_struct))
+				return FALSE;
+
 			readmem(tc->mm_struct + OFFSET(mm_struct_pgd),
 				KVADDR, &pgd, sizeof(long), "mm_struct pgd",
 				FAULT_ON_ERROR);
+		}
 	}
 
 	return mips_pgd_vtop(pgd, vaddr, paddr, verbose);

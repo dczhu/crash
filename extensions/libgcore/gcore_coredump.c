@@ -152,6 +152,9 @@ void gcore_coredump(void)
 		uint64_t p_offset, p_filesz;
 		uint32_t p_flags;
 
+		if (!IS_KVADDR(vma))
+			continue;
+
 		vma_cache = fill_vma_cache(vma);
 		vm_start = ULONG(vma_cache + OFFSET(vm_area_struct_vm_start));
 		vm_end   = ULONG(vma_cache + OFFSET(vm_area_struct_vm_end));
@@ -203,6 +206,9 @@ void gcore_coredump(void)
 	progressf("Writing PT_LOAD segment ... \n");
 	FOR_EACH_VMA_OBJECT(vma, index, mmap, gate_vma) {
 		ulong addr, end, vm_start;
+
+		if (!IS_KVADDR(vma))
+			continue;
 
 		vm_start = ULONG(fill_vma_cache(vma) +
 				 OFFSET(vm_area_struct_vm_start));
@@ -659,6 +665,9 @@ ulong next_vma(ulong this_vma, ulong gate_vma)
 {
 	ulong next;
 
+	if (!IS_KVADDR(this_vma))
+		return 0UL;
+
 	next = ULONG(fill_vma_cache(this_vma) + OFFSET(vm_area_struct_vm_next));
 	if (next)
 		return next;
@@ -862,6 +871,9 @@ fill_auxv_note(struct elf_note_info *info, struct task_context *tc,
 	int i;
 
 	auxv = (ulong *)GETBUF(GCORE_SIZE(mm_struct_saved_auxv));
+
+	if (!IS_KVADDR(task_mm(tc->task, FALSE)))
+		return;
 
 	readmem(task_mm(tc->task, FALSE) +
 		GCORE_OFFSET(mm_struct_saved_auxv), KVADDR, auxv,

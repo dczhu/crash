@@ -220,6 +220,9 @@ __task_pid_nr_ns(ulong task, enum pid_type type)
 		sizeof(nsproxy), "__task_pid_nr_ns: nsproxy",
 		gcore_verbose_error_handle());
 
+	if (!IS_KVADDR(nsproxy))
+		return 0;
+
 	readmem(nsproxy + GCORE_OFFSET(nsproxy_pid_ns), KVADDR, &ns,
 		sizeof(ns), "__task_pid_nr_ns: ns", gcore_verbose_error_handle());
 
